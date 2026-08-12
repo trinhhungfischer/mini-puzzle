@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<!--
+PROTOTYPE - NOT FOR PRODUCTION
+Question: Will a shrunk-down, touch-friendly flood-fill puzzle built from
+irregular polyomino pieces (not a plain per-cell grid) be instantly
+understandable and satisfying on mobile, without instructions?
+Date: 2026-08-11
+-->
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Flood Mobile — Prototype</title>
+<style>
+  :root {
+    --bg: #14181f;
+    --panel: #1d232d;
+    --text: #eef1f5;
+    --muted: #8a93a3;
+    --accent: #4f8cff;
+    --win: #35c98f;
+    --lose: #ff5c5c;
+    --hidden-bg: #3a4252;
+    --ice-tint: rgba(160, 220, 255, 0.45);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: env(safe-area-inset-top, 16px) 16px calc(env(safe-area-inset-bottom, 16px) + 12px);
+    min-height: 100%;
+    gap: 14px;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+    margin: 8px 0 0;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin: -8px 0 0;
+    text-align: center;
+  }
+
+  .hud {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .stat {
+    flex: 1;
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+
+  .stat .label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .stat .value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  /* boardWrap only exists to give layoutBoard() a stable pixel width to
+     measure — the board itself is sized in exact integer pixels by JS so
+     cells always come out perfectly square (see layoutBoard()). */
+  #boardWrap {
+    width: min(92vw, 420px);
+    display: flex;
+    justify-content: center;
+  }
+
+  #board {
+    display: grid;
+    gap: 3px;
+    background: var(--panel);
+    padding: 6px;
+    border-radius: 14px;
+    position: relative;
+  }
+
+  .cell {
+    position: relative;
+    border-radius: 6px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  /* Small filler rectangles that bridge the grid gap between two cells of
+     the same group (same not-yet-captured piece, or both part of the
+     captured territory) so they read as one seamless rounded shape instead
+     of separate tiles. Positioned/sized in JS (renderBoard()) to exactly
+     span the gap, using the same pixel math as layoutBoard(). */
+  .bridge {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .cell .glyph {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    pointer-events: none;
+    font-size: 0.85em;
+  }
+
+  .cell.frozen {
+    box-shadow: inset 0 0 0 999px var(--ice-tint);
+  }
+
+  #palette {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    width: min(92vw, 420px);
+  }
+
+  .swatch {
+    height: 56px;
+    border: 0;
+    border-radius: 14px;
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,0.25);
+    cursor: pointer;
+    transition: filter 120ms ease, opacity 120ms ease;
+  }
+
+  .swatch:active {
+    transform: scale(0.94);
+  }
+
+  .swatch.current {
+    outline: 3px solid #fff;
+    outline-offset: -3px;
+  }
+
+  .swatch.dimmed,
+  .swatch:disabled {
+    filter: brightness(0.4) saturate(0.5);
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  #controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: min(92vw, 420px);
+  }
+
+  #controls button,
+  #controls a {
+    height: 46px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+
+  #controls button:active,
+  #controls a:active { transform: scale(0.98); }
+
+  #controls button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  #levelLabel {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-align: center;
+    min-height: 1em;
+  }
+
+  #loadLink {
+    background: none;
+    border: 0;
+    color: var(--accent);
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 4px;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10,12,16,0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+    text-align: center;
+    padding: 24px;
+  }
+
+  #overlay.show { display: flex; }
+
+  #overlayTitle {
+    font-size: 1.8rem;
+    font-weight: 800;
+  }
+
+  #overlayTitle.win { color: var(--win); }
+  #overlayTitle.lose { color: var(--lose); }
+
+  #overlayBtn {
+    padding: 12px 28px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Flood Mobile</h1>
+  <p class="subtitle">Chạm vào một màu để lan từ điểm khởi đầu. Phủ kín cả lưới trước khi hết lượt.</p>
+
+  <div class="hud">
+    <div class="stat">
+      <div class="label">Lượt còn lại</div>
+      <div class="value" id="movesLeft">--</div>
+    </div>
+    <div class="stat">
+      <div class="label">Kích thước</div>
+      <div class="value" id="sizeLabel">--</div>
+    </div>
+  </div>
+
+  <div id="boardWrap"><div id="board"></div></div>
+
+  <div id="palette"></div>
+
+  <div id="controls">
+    <button id="retryBtn">Chơi lại</button>
+    <button id="nextBtn">Next</button>
+    <button id="backBtn">Back</button>
+    <a id="editorLink" href="editor.html" target="_blank" rel="noopener">Mở Editor</a>
+  </div>
+  <div id="levelLabel"></div>
+  <button id="loadLink">Tải level JSON khác…</button>
+  <input type="file" id="fileInput" accept="application/json,.json" style="display:none">
+
+  <div id="overlay">
+    <div id="overlayTitle"></div>
+    <div id="overlayDetail" class="subtitle"></div>
+    <button id="overlayBtn">Chơi lại</button>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Defaults for the built-in starter pack (tune here) ----
+  const DEFAULT_W = 8;
+  const DEFAULT_H = 8;
+  const DEFAULT_COLORS = [
+    "#ff6b6b", // red
+    "#ffd93d", // yellow
+    "#4f8cff", // blue
+    "#35c98f", // green
+    "#c084fc"  // purple
+  ];
+  const DEFAULT_MAX_MOVES = 18;
+  const STARTER_PACK_SIZE = 5;
+  const MIN_PIECE_SIZE = 1;
+  const MAX_PIECE_SIZE = 4; // 1x1 up to tetromino-sized (4 cells)
+  const BOARD_PADDING = 6; // must match #board CSS padding
+  const BOARD_GAP = 3;     // must match #board CSS gap
+  const CELL_RADIUS = 6;   // must match .cell CSS border-radius
+
+  const boardWrapEl = document.getElementById("boardWrap");
+  const boardEl = document.getElementById("board");
+  const paletteEl = document.getElementById("palette");
+  const movesLeftEl = document.getElementById("movesLeft");
+  const sizeLabelEl = document.getElementById("sizeLabel");
+  const levelLabelEl = document.getElementById("levelLabel");
+  const retryBtn = document.getElementById("retryBtn");
+  const nextBtn = document.getElementById("nextBtn");
+  const backBtn = document.getElementById("backBtn");
+  const loadLink = document.getElementById("loadLink");
+  const fileInput = document.getElementById("fileInput");
+  const overlay = document.getElementById("overlay");
+  const overlayTitle = document.getElementById("overlayTitle");
+  const overlayDetail = document.getElementById("overlayDetail");
+  const overlayBtn = document.getElementById("overlayBtn");
+
+  // ---- Level pack: an ordered list of levels Next/Back page through.
+  // Built once at startup (random). Loading a custom JSON via "Tải level
+  // JSON khác" inserts it right after the current spot in the pack. ----
+  let pack = [];
+  let packIndex = 0;
+
+  // ---- Current level state (mutable — set from pack[packIndex]) ----
+  let W = DEFAULT_W;
+  let H = DEFAULT_H;
+  let COLORS = DEFAULT_COLORS.slice();
+  let MAX_MOVES = DEFAULT_MAX_MOVES;
+  let startIndex = 0;
+  let cellPieceId = [];         // static per-cell piece id, fixed for the level's lifetime
+  let originalPieceColors = []; // color index per piece id, as the level starts (for retry)
+  let pieceMechanics = [];      // {type:'normal'|'hidden'|'ice', turns?} per piece id, fixed for the level's lifetime
+  let levelName = "";
+
+  // ---- Derived per-level structure (rebuilt whenever cellPieceId changes) ----
+  let pieceCells = [];     // pieceId -> [cell indices]
+  let pieceLabelCell = []; // pieceId -> single "center" cell used for the glyph ("?" / ice countdown)
+
+  // ---- DOM bookkeeping for rendering ----
+  let cellEls = [];        // cell index -> its .cell element (indexed directly, not via boardEl.children,
+                            // since .bridge filler elements also live in #board as siblings)
+  let bridgeEls = [];      // .bridge elements created by the current renderBoard() pass, for cleanup
+  let currentCellSize = 0; // last computed pixel size per cell, from layoutBoard() — reused to position bridges
+
+  // ---- Per-play state ----
+  let grid = [];              // current color index per cell (mutates as you play)
+  let filled = new Set();     // cell indices currently part of the captured territory
+  let iceRemaining = [];      // pieceId -> turns left frozen (0 = thawed / not ice)
+  let currentColor = 0;
+  let movesLeft = MAX_MOVES;
+  let gameOver = false;
+
+  function idx(x, y) { return y * W + x; }
+
+  function neighborsOf(i) {
+    const x = i % W, y = Math.floor(i / W);
+    const list = [];
+    if (x > 0) list.push(i - 1);
+    if (x < W - 1) list.push(i + 1);
+    if (y > 0) list.push(i - W);
+    if (y < H - 1) list.push(i + W);
+    return list;
+  }
+
+  // Randomly tiles a w*h grid with connected polyomino pieces of
+  // MIN_PIECE_SIZE..MAX_PIECE_SIZE cells (1x1, dominoes, L/T/S/Z/I-ish
+  // tetromino shapes emerge naturally from the random growth walk). The
+  // starter pack only ever produces plain "normal" pieces — hidden/ice
+  // blocks are a hand-authoring tool (see editor.html), not randomized.
+  function generateRandomPieces(w, h, colorCount) {
+    const total = w * h;
+    const pieceId = new Array(total).fill(-1);
+    let nextId = 0;
+
+    function neighborsIn(i) {
+      const x = i % w, y = Math.floor(i / w);
+      const list = [];
+      if (x > 0) list.push(i - 1);
+      if (x < w - 1) list.push(i + 1);
+      if (y > 0) list.push(i - w);
+      if (y < h - 1) list.push(i + w);
+      return list;
+    }
+
+    for (let start = 0; start < total; start++) {
+      if (pieceId[start] !== -1) continue;
+      const id = nextId++;
+      pieceId[start] = id;
+      const targetSize = MIN_PIECE_SIZE + Math.floor(Math.random() * (MAX_PIECE_SIZE - MIN_PIECE_SIZE + 1));
+      let frontier = neighborsIn(start).filter(n => pieceId[n] === -1);
+      let size = 1;
+      while (size < targetSize && frontier.length > 0) {
+        const pos = Math.floor(Math.random() * frontier.length);
+        const pick = frontier[pos];
+        frontier.splice(pos, 1);
+        if (pieceId[pick] !== -1) continue;
+        pieceId[pick] = id;
+        size++;
+        for (const n of neighborsIn(pick)) {
+          if (pieceId[n] === -1 && !frontier.includes(n)) frontier.push(n);
+        }
+      }
+    }
+
+    const colors = new Array(nextId);
+    for (let p = 0; p < nextId; p++) colors[p] = Math.floor(Math.random() * colorCount);
+    const mechanics = new Array(nextId).fill(null).map(() => ({ type: "normal" }));
+    return { pieceId, colors, mechanics };
+  }
+
+  function buildStarterPack(n) {
+    const levels = [];
+    for (let i = 0; i < n; i++) {
+      const { pieceId, colors, mechanics } = generateRandomPieces(DEFAULT_W, DEFAULT_H, DEFAULT_COLORS.length);
+      levels.push({
+        name: `Level ${i + 1}`,
+        w: DEFAULT_W,
+        h: DEFAULT_H,
+        colors: DEFAULT_COLORS.slice(),
+        maxMoves: DEFAULT_MAX_MOVES,
+        startIndex: 0,
+        pieceMap: pieceId,
+        pieceColors: colors,
+        pieceMechanics: mechanics
+      });
+    }
+    return levels;
+  }
+
+  // Rebuilds the piece -> cells lookup and a single "label cell" per piece
+  // (the piece's own cell closest to its shape's centroid) used to place the
+  // "?" / ice-countdown glyph once per block instead of once per cell.
+  function buildPieceIndex() {
+    const count = cellPieceId.reduce((m, v) => Math.max(m, v), -1) + 1;
+    pieceCells = new Array(count);
+    for (let p = 0; p < count; p++) pieceCells[p] = [];
+    for (let i = 0; i < cellPieceId.length; i++) pieceCells[cellPieceId[i]].push(i);
+
+    pieceLabelCell = new Array(count);
+    for (let p = 0; p < count; p++) {
+      const cells = pieceCells[p];
+      let sx = 0, sy = 0;
+      for (const c of cells) { sx += c % W; sy += Math.floor(c / W); }
+      const cx = sx / cells.length, cy = sy / cells.length;
+      let best = cells[0], bestDist = Infinity;
+      for (const c of cells) {
+        const dx = (c % W) - cx, dy = Math.floor(c / W) - cy;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = c; }
+      }
+      pieceLabelCell[p] = best;
+    }
+  }
+
+  function isPieceFrozen(p) {
+    return (iceRemaining[p] || 0) > 0;
+  }
+
+  // Hidden pieces conceal their real color until the captured territory
+  // touches (or contains) any of their cells. Since `filled` only ever
+  // grows during a playthrough, "touched at any point" == "touched now",
+  // so this can be recomputed fresh each render with no extra state.
+  function computeConcealedHiddenPieces() {
+    const concealed = new Set();
+    for (let p = 0; p < pieceMechanics.length; p++) {
+      if (!pieceMechanics[p] || pieceMechanics[p].type !== "hidden") continue;
+      const touched = pieceCells[p].some(c => filled.has(c) || neighborsOf(c).some(n => filled.has(n)));
+      if (!touched) concealed.add(p);
+    }
+    return concealed;
+  }
+
+  // Frozen ice pieces are impassable to the flood fill regardless of color
+  // match — they only ever join the territory once thawed.
+  function bfsRegion(startIdx, color) {
+    const seen = new Set([startIdx]);
+    const queue = [startIdx];
+    while (queue.length) {
+      const cur = queue.pop();
+      for (const ni of neighborsOf(cur)) {
+        if (seen.has(ni)) continue;
+        if (isPieceFrozen(cellPieceId[ni])) continue;
+        if (grid[ni] === color) {
+          seen.add(ni);
+          queue.push(ni);
+        }
+      }
+    }
+    return seen;
+  }
+
+  function isSolved() {
+    const c = grid[startIndex];
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] !== c) return false;
+    }
+    return true;
+  }
+
+  function buildBoardDom() {
+    boardEl.innerHTML = "";
+    cellEls = [];
+    bridgeEls = [];
+    for (let i = 0; i < W * H; i++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      const glyph = document.createElement("div");
+      glyph.className = "glyph";
+      cell.appendChild(glyph);
+      boardEl.appendChild(cell);
+      cellEls.push(cell);
+    }
+    layoutBoard();
+  }
+
+  // Computes an exact integer pixel size per cell from the wrapper's actual
+  // width (accounting for the CSS gap between cells), then sets the board's
+  // pixel width/height and grid track sizes directly in px. This is what
+  // keeps cells perfectly square — letting the browser derive cell size
+  // from percentages or aspect-ratio can round each track differently and
+  // produce slightly uneven rows/columns. The resulting cellSize is also
+  // what renderBoard() uses to position the merge bridges in px.
+  function layoutBoard() {
+    const wrapWidth = boardWrapEl.clientWidth;
+    const inner = Math.max(1, wrapWidth - BOARD_PADDING * 2 - BOARD_GAP * (W - 1));
+    const cellSize = Math.max(4, Math.floor(inner / W));
+    currentCellSize = cellSize;
+    const pixelW = cellSize * W + BOARD_GAP * (W - 1) + BOARD_PADDING * 2;
+    const pixelH = cellSize * H + BOARD_GAP * (H - 1) + BOARD_PADDING * 2;
+    boardEl.style.width = pixelW + "px";
+    boardEl.style.height = pixelH + "px";
+    boardEl.style.gridTemplateColumns = `repeat(${W}, ${cellSize}px)`;
+    boardEl.style.gridTemplateRows = `repeat(${H}, ${cellSize}px)`;
+  }
+
+  // Visual "group" a cell belongs to for merging purposes: every captured
+  // cell shares one group ("F") regardless of its original piece, so the
+  // whole territory reads as one blob; an uncaptured cell's group is its
+  // own piece id, so a piece's own cells merge into their designed shape.
+  function groupOf(i) {
+    return filled.has(i) ? "F" : cellPieceId[i];
+  }
+
+  function addBridge(left, top, w, h, color) {
+    const b = document.createElement("div");
+    b.className = "bridge";
+    b.style.left = left + "px";
+    b.style.top = top + "px";
+    b.style.width = w + "px";
+    b.style.height = h + "px";
+    b.style.background = color;
+    boardEl.appendChild(b);
+    bridgeEls.push(b);
+  }
+
+  // Renders cells and, for every pair of same-group orthogonal neighbors,
+  // a small filler rectangle bridging the CSS grid gap between them so the
+  // group reads as one seamless rounded shape. Each cell's own corner
+  // radii are individually flattened wherever that corner sits strictly
+  // inside the group (both orthogonal neighbors AND the diagonal neighbor
+  // at that corner are same-group) and left rounded everywhere else — so
+  // only the group's true outer boundary looks rounded, matching how a
+  // single rounded shape would look if drawn as one piece.
+  function renderBoard() {
+    const concealed = computeConcealedHiddenPieces();
+    const size = currentCellSize;
+
+    bridgeEls.forEach(el => el.remove());
+    bridgeEls = [];
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = idx(x, y);
+        const cell = cellEls[i];
+        const glyph = cell.firstChild;
+        const p = cellPieceId[i];
+        const mech = pieceMechanics[p] || { type: "normal" };
+        const isConcealed = concealed.has(p);
+        const isFrozen = mech.type === "ice" && isPieceFrozen(p);
+        const isFilled = filled.has(i);
+        const color = isConcealed ? "var(--hidden-bg)" : COLORS[grid[i]];
+
+        cell.style.background = color;
+        cell.classList.toggle("frozen", isFrozen);
+
+        if (i === pieceLabelCell[p]) {
+          if (isConcealed) glyph.textContent = "?";
+          else if (isFrozen) glyph.textContent = String(iceRemaining[p]);
+          else glyph.textContent = "";
+        } else {
+          glyph.textContent = "";
+        }
+
+        const g = groupOf(i);
+        const topI = y > 0 ? idx(x, y - 1) : null;
+        const bottomI = y < H - 1 ? idx(x, y + 1) : null;
+        const leftI = x > 0 ? idx(x - 1, y) : null;
+        const rightI = x < W - 1 ? idx(x + 1, y) : null;
+        const tlI = (x > 0 && y > 0) ? idx(x - 1, y - 1) : null;
+        const trI = (x < W - 1 && y > 0) ? idx(x + 1, y - 1) : null;
+        const blI = (x > 0 && y < H - 1) ? idx(x - 1, y + 1) : null;
+        const brI = (x < W - 1 && y < H - 1) ? idx(x + 1, y + 1) : null;
+
+        const sameTop = topI !== null && groupOf(topI) === g;
+        const sameBottom = bottomI !== null && groupOf(bottomI) === g;
+        const sameLeft = leftI !== null && groupOf(leftI) === g;
+        const sameRight = rightI !== null && groupOf(rightI) === g;
+        const sameTL = tlI !== null && groupOf(tlI) === g;
+        const sameTR = trI !== null && groupOf(trI) === g;
+        const sameBL = blI !== null && groupOf(blI) === g;
+        const sameBR = brI !== null && groupOf(brI) === g;
+
+        const flatTL = sameTop && sameLeft && sameTL;
+        const flatTR = sameTop && sameRight && sameTR;
+        const flatBR = sameBottom && sameRight && sameBR;
+        const flatBL = sameBottom && sameLeft && sameBL;
+
+        cell.style.borderRadius =
+          (flatTL ? 0 : CELL_RADIUS) + "px " +
+          (flatTR ? 0 : CELL_RADIUS) + "px " +
+          (flatBR ? 0 : CELL_RADIUS) + "px " +
+          (flatBL ? 0 : CELL_RADIUS) + "px";
+
+        // Captured territory gets a white boundary — only on sides that
+        // actually border something outside the territory.
+        cell.style.borderTop = (isFilled && !sameTop) ? "2px solid #ffffff" : "none";
+        cell.style.borderRight = (isFilled && !sameRight) ? "2px solid #ffffff" : "none";
+        cell.style.borderBottom = (isFilled && !sameBottom) ? "2px solid #ffffff" : "none";
+        cell.style.borderLeft = (isFilled && !sameLeft) ? "2px solid #ffffff" : "none";
+
+        const cellLeftPx = x * (size + BOARD_GAP);
+        const cellTopPx = y * (size + BOARD_GAP);
+
+        // Bridges must stop exactly where the cell's own rounded corner
+        // starts curving (CELL_RADIUS from that corner) — a bridge that
+        // runs the full edge length regardless of corner rounding doesn't
+        // line up with the curve there, which is what made joints look
+        // rough/notched. Only inset to 0 when that corner is flat (fully
+        // interior to the group), matching where the straight edge really
+        // begins.
+        if (sameRight) {
+          const topInset = flatTR ? 0 : CELL_RADIUS;
+          const bottomInset = flatBR ? 0 : CELL_RADIUS;
+          const h = Math.max(0, size - topInset - bottomInset);
+          addBridge(cellLeftPx + size, cellTopPx + topInset, BOARD_GAP, h, color);
+        }
+        if (sameBottom) {
+          const leftInset = flatBL ? 0 : CELL_RADIUS;
+          const rightInset = flatBR ? 0 : CELL_RADIUS;
+          const w = Math.max(0, size - leftInset - rightInset);
+          addBridge(cellLeftPx + leftInset, cellTopPx + size, w, BOARD_GAP, color);
+        }
+      }
+    }
+  }
+
+  // Colors of pieces that touch the captured territory but aren't part of
+  // it yet — i.e. colors that would actually grow your territory this turn.
+  // Frozen ice pieces are excluded even if adjacent and color-matching,
+  // since picking that color still couldn't capture them this turn.
+  function frontierColors() {
+    const set = new Set();
+    filled.forEach(i => {
+      for (const n of neighborsOf(i)) {
+        if (filled.has(n)) continue;
+        if (isPieceFrozen(cellPieceId[n])) continue;
+        set.add(grid[n]);
+      }
+    });
+    return set;
+  }
+
+  function renderPalette() {
+    const frontier = frontierColors();
+    paletteEl.innerHTML = "";
+    COLORS.forEach((c, i) => {
+      const btn = document.createElement("button");
+      const isCurrent = i === currentColor;
+      const isUseless = !isCurrent && !frontier.has(i);
+      btn.className = "swatch" + (isCurrent ? " current" : "") + (isUseless ? " dimmed" : "");
+      btn.style.background = c;
+      // Dimmed = would not grow the territory this turn — genuinely
+      // disabled, not just visually discouraged, so the button never
+      // silently wastes a move.
+      btn.disabled = isUseless;
+      btn.addEventListener("click", () => onPickColor(i));
+      paletteEl.appendChild(btn);
+    });
+  }
+
+  function renderHud() {
+    movesLeftEl.textContent = `${movesLeft} / ${MAX_MOVES}`;
+    sizeLabelEl.textContent = `${W}×${H}`;
+    levelLabelEl.textContent = `${levelName} (${packIndex + 1}/${pack.length})`;
+    backBtn.disabled = packIndex <= 0;
+    nextBtn.disabled = packIndex >= pack.length - 1;
+  }
+
+  function showOverlay(won) {
+    overlay.classList.add("show");
+    overlayTitle.textContent = won ? "Thắng rồi! 🎉" : "Hết lượt rồi";
+    overlayTitle.className = won ? "win" : "lose";
+    overlayDetail.textContent = won
+      ? `Bạn phủ kín lưới trong ${MAX_MOVES - movesLeft} lượt.`
+      : "Lưới chưa phủ kín một màu. Thử lại nhé.";
+  }
+
+  function hideOverlay() {
+    overlay.classList.remove("show");
+  }
+
+  function onPickColor(colorIndex) {
+    if (gameOver) return;
+    if (colorIndex === currentColor) return; // no-op tap, no move spent
+    if (!frontierColors().has(colorIndex)) return; // disabled — would not grow territory, no move spent
+
+    // Ice pieces thaw as moves pass. Decrement first so a piece that hits 0
+    // this move is already capturable by this same move's flood-fill.
+    for (let p = 0; p < iceRemaining.length; p++) {
+      if (iceRemaining[p] > 0) iceRemaining[p]--;
+    }
+
+    grid.forEach((_, i) => {
+      if (filled.has(i)) grid[i] = colorIndex;
+    });
+    currentColor = colorIndex;
+    filled = bfsRegion(startIndex, colorIndex);
+    movesLeft--;
+
+    renderBoard();
+    renderPalette();
+    renderHud();
+
+    if (isSolved()) {
+      gameOver = true;
+      showOverlay(true);
+      return;
+    }
+    if (movesLeft <= 0) {
+      gameOver = true;
+      showOverlay(false);
+    }
+  }
+
+  // Resets colors/moves back to the level's starting state without
+  // reshuffling piece shapes — "retry the same puzzle".
+  function resetCurrentBoard() {
+    buildPieceIndex();
+    grid = cellPieceId.map(pid => originalPieceColors[pid]);
+    iceRemaining = pieceCells.map((_, p) => {
+      const mech = pieceMechanics[p];
+      return mech && mech.type === "ice" ? Math.max(0, mech.turns | 0) : 0;
+    });
+    currentColor = grid[startIndex];
+    filled = bfsRegion(startIndex, currentColor);
+    movesLeft = MAX_MOVES;
+    gameOver = false;
+    hideOverlay();
+    buildBoardDom();
+    renderBoard();
+    renderPalette();
+    renderHud();
+  }
+
+  function loadPackLevel(i) {
+    const lvl = pack[i];
+    packIndex = i;
+    W = lvl.w;
+    H = lvl.h;
+    COLORS = lvl.colors.slice();
+    MAX_MOVES = lvl.maxMoves;
+    startIndex = lvl.startIndex;
+    cellPieceId = lvl.pieceMap;
+    originalPieceColors = lvl.pieceColors;
+    pieceMechanics = lvl.pieceMechanics || lvl.pieceColors.map(() => ({ type: "normal" }));
+    levelName = lvl.name;
+    resetCurrentBoard();
+  }
+
+  function validateConfig(cfg) {
+    if (!cfg || typeof cfg !== "object") throw new Error("Config rỗng hoặc sai định dạng");
+    const w = Number.isInteger(cfg.gridWidth) ? cfg.gridWidth : cfg.gridSize;
+    const h = Number.isInteger(cfg.gridHeight) ? cfg.gridHeight : cfg.gridSize;
+    if (!Number.isInteger(w) || w < 2 || w > 24) throw new Error("gridWidth phải là số nguyên 2-24");
+    if (!Number.isInteger(h) || h < 2 || h > 24) throw new Error("gridHeight phải là số nguyên 2-24");
+    if (!Array.isArray(cfg.pieceMap) || cfg.pieceMap.length !== w * h) {
+      throw new Error(`pieceMap phải có đúng ${w * h} phần tử`);
+    }
+    if (!Array.isArray(cfg.pieceColors) || cfg.pieceColors.length === 0) {
+      throw new Error("thiếu pieceColors");
+    }
+    const colors = Array.isArray(cfg.colors) && cfg.colors.length > 0 ? cfg.colors.slice() : DEFAULT_COLORS.slice();
+    const maxPieceId = cfg.pieceMap.reduce((m, v) => Math.max(m, v), -1);
+    if (maxPieceId >= cfg.pieceColors.length) {
+      throw new Error("pieceMap tham chiếu piece id vượt quá độ dài pieceColors");
+    }
+    for (const c of cfg.pieceColors) {
+      if (!Number.isInteger(c) || c < 0 || c >= colors.length) {
+        throw new Error("pieceColors có giá trị màu không hợp lệ");
+      }
+    }
+    const pieceCount = cfg.pieceColors.length;
+    let mechanics;
+    if (Array.isArray(cfg.pieceMechanics)) {
+      mechanics = new Array(pieceCount);
+      for (let p = 0; p < pieceCount; p++) {
+        const m = cfg.pieceMechanics[p];
+        if (!m || typeof m !== "object" || !["normal", "hidden", "ice"].includes(m.type)) {
+          mechanics[p] = { type: "normal" };
+        } else if (m.type === "ice") {
+          mechanics[p] = { type: "ice", turns: Number.isInteger(m.turns) && m.turns > 0 ? m.turns : 3 };
+        } else {
+          mechanics[p] = { type: m.type };
+        }
+      }
+    } else {
+      mechanics = new Array(pieceCount).fill(null).map(() => ({ type: "normal" }));
+    }
+    const maxMoves = Number.isInteger(cfg.maxMoves) && cfg.maxMoves > 0 ? cfg.maxMoves : DEFAULT_MAX_MOVES;
+    const name = typeof cfg.name === "string" && cfg.name.trim() ? cfg.name.trim() : "Level JSON";
+    const total = w * h;
+    const start = Number.isInteger(cfg.startIndex) && cfg.startIndex >= 0 && cfg.startIndex < total ? cfg.startIndex : 0;
+    return {
+      w, h,
+      pieceMap: cfg.pieceMap.slice(),
+      pieceColors: cfg.pieceColors.slice(),
+      pieceMechanics: mechanics,
+      colors,
+      maxMoves,
+      name,
+      startIndex: start
+    };
+  }
+
+  // Loading a custom level slots it into the pack right after the level
+  // you're currently on, so Next/Back keep working sensibly afterward.
+  function loadCustomLevel(rawCfg) {
+    const cfg = validateConfig(rawCfg);
+    pack.splice(packIndex + 1, 0, cfg);
+    loadPackLevel(packIndex + 1);
+  }
+
+  retryBtn.addEventListener("click", resetCurrentBoard);
+  nextBtn.addEventListener("click", () => {
+    if (packIndex < pack.length - 1) loadPackLevel(packIndex + 1);
+  });
+  backBtn.addEventListener("click", () => {
+    if (packIndex > 0) loadPackLevel(packIndex - 1);
+  });
+  overlayBtn.addEventListener("click", resetCurrentBoard);
+
+  loadLink.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const cfg = JSON.parse(String(reader.result));
+        loadCustomLevel(cfg);
+      } catch (err) {
+        alert("Không tải được level: " + err.message);
+      }
+    };
+    reader.onerror = () => alert("Không đọc được file.");
+    reader.readAsText(file);
+    fileInput.value = "";
+  });
+
+  let resizePending = false;
+  window.addEventListener("resize", () => {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(() => {
+      resizePending = false;
+      layoutBoard();
+      renderBoard(); // cellSize may have changed — bridges need repositioning
+    });
+  });
+
+  pack = buildStarterPack(STARTER_PACK_SIZE);
+  loadPackLevel(0);
+})();
+</script>
+
+</body>
+</html>

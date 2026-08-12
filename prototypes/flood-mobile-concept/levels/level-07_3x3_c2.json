@@ -1,0 +1,13 @@
+{
+  "name": "Level 07 (3x3, 2 mau)",
+  "gridWidth": 3,
+  "gridHeight": 3,
+  "maxMoves": 7,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d"
+  ],
+  "pieceMap": [0,0,1,2,3,1,4,1,1],
+  "pieceColors": [0,0,1,1,1]
+}

@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<!--
+PROTOTYPE - NOT FOR PRODUCTION
+Question: Can a non-programmer hand-author a Flood Mobile level (custom
+board size, hand-placed polyomino pieces, custom start point) and export it
+as JSON that the gameplay prototype can load and play correctly?
+Date: 2026-08-11
+-->
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flood Mobile — Level Editor</title>
+<style>
+  :root {
+    --bg: #14181f;
+    --panel: #1d232d;
+    --panel2: #262f3d;
+    --text: #eef1f5;
+    --muted: #8a93a3;
+    --accent: #4f8cff;
+    --empty: #333c4a;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 16px 40px;
+    gap: 14px;
+  }
+
+  header {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  h1 { font-size: 1.2rem; margin: 0; }
+  .subtitle { color: var(--muted); font-size: 0.82rem; margin: 0; }
+
+  a.back {
+    color: var(--accent);
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+
+  .layout {
+    width: 100%;
+    max-width: 900px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  @media (min-width: 720px) {
+    .layout { grid-template-columns: minmax(260px, 340px) 1fr; align-items: start; }
+  }
+
+  section {
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  section h2 {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .field-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 90px;
+  }
+
+  .field label {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  input, select {
+    background: var(--panel2);
+    border: 1px solid #38414f;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    width: 100%;
+  }
+
+  button {
+    border: 0;
+    border-radius: 10px;
+    background: var(--panel2);
+    color: var(--text);
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  button:active { transform: scale(0.98); }
+
+  button.primary { background: var(--accent); color: #fff; }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mode-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .mode-group button.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  #palette {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .swatch {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 0;
+    cursor: pointer;
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.25);
+  }
+
+  .swatch.selected {
+    outline: 3px solid #fff;
+    outline-offset: -3px;
+  }
+
+  #status {
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  #status .warn { color: #ffcf5c; }
+  #status .ok { color: #35c98f; }
+
+  #boardWrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  #board {
+    display: grid;
+    gap: 0;
+    background: var(--panel2);
+    padding: 6px;
+    border-radius: 12px;
+  }
+
+  .cell {
+    position: relative;
+    cursor: pointer;
+  }
+
+  .cell .startMark {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 14px;
+    text-shadow: 0 0 3px rgba(0,0,0,0.8);
+    pointer-events: none;
+  }
+
+  .cell.isStart .startMark { display: flex; }
+
+  .cell .mechMark {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 10px;
+    font-weight: 800;
+    color: #fff;
+    background: rgba(0,0,0,0.55);
+    border-radius: 5px;
+    padding: 0 3px;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    background: var(--panel2);
+    border: 1px solid #38414f;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+  }
+
+  .hint {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Flood Mobile — Level Editor</h1>
+    <p class="subtitle">Công cụ riêng để dựng level bằng tay — không nằm trên giao diện gameplay.</p>
+  </div>
+  <a class="back" href="prototype.html" target="_blank" rel="noopener">→ Mở Gameplay để test</a>
+</header>
+
+<div class="layout">
+  <div style="display:flex; flex-direction:column; gap:16px;">
+
+    <section>
+      <h2>Kích thước &amp; thông tin level</h2>
+      <div class="field-row">
+        <div class="field">
+          <label for="nameInput">Tên level</label>
+          <input id="nameInput" type="text" value="Level tuỳ chỉnh">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="widthInput">Rộng (ô)</label>
+          <input id="widthInput" type="number" min="2" max="24" value="8">
+        </div>
+        <div class="field">
+          <label for="heightInput">Cao (ô)</label>
+          <input id="heightInput" type="number" min="2" max="24" value="8">
+        </div>
+        <div class="field">
+          <label for="movesInput">Lượt tối đa</label>
+          <input id="movesInput" type="number" min="1" max="200" value="18">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button id="newGridBtn">Tạo lưới mới (xoá hết)</button>
+        <button id="randomBtn">Ngẫu nhiên</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Công cụ</h2>
+      <div class="mode-group" id="modeGroup">
+        <button data-mode="draw" class="active">Vẽ khối</button>
+        <button data-mode="erase">Xoá</button>
+        <button data-mode="start">Đặt điểm khởi đầu</button>
+      </div>
+      <div class="hint">
+        "Vẽ khối": chạm các ô trống liền nhau để tạo 1 khối màu. Bấm "Khối mới"
+        để bắt đầu khối tiếp theo (kể cả cùng màu). "Xoá": chạm ô để gỡ khỏi khối.
+        "Đặt điểm khởi đầu": chạm 1 ô đã có khối để chọn nơi vùng chiếm bắt đầu.
+      </div>
+      <div>
+        <label class="hint" for="palette">Màu cho khối tiếp theo</label>
+        <div id="palette"></div>
+      </div>
+      <div class="btn-row">
+        <button id="newPieceBtn">Khối mới</button>
+      </div>
+      <div class="field">
+        <label for="mechanicSelect">Cơ chế cho khối tiếp theo</label>
+        <select id="mechanicSelect">
+          <option value="normal">Bình thường</option>
+          <option value="hidden">Ẩn màu (hiện dấu ? tới khi lãnh thổ chạm tới)</option>
+          <option value="ice">Băng (phá băng sau N lượt mới bị chiếm)</option>
+        </select>
+      </div>
+      <div class="field" id="iceTurnsField" style="display:none;">
+        <label for="iceTurnsInput">Số lượt tan băng</label>
+        <input id="iceTurnsInput" type="number" min="1" max="99" value="3">
+      </div>
+      <div class="hint">
+        Cơ chế áp dụng cho khối đang vẽ (hoặc khối tiếp theo nếu chưa bắt đầu).
+        Đổi cơ chế khi đang vẽ dở sẽ cập nhật luôn khối đó.
+      </div>
+    </section>
+
+    <section>
+      <h2>Import / Export</h2>
+      <div class="btn-row">
+        <button id="loadBtn">Tải JSON để sửa</button>
+        <button id="exportBtn" class="primary">Xuất JSON</button>
+      </div>
+      <input type="file" id="fileInput" accept="application/json,.json" style="display:none">
+      <div id="status"></div>
+      <textarea id="jsonPreview" readonly placeholder="JSON xem trước sẽ hiện ở đây sau khi bấm Xuất JSON..."></textarea>
+    </section>
+
+  </div>
+
+  <section>
+    <h2>Bàn vẽ</h2>
+    <div id="boardWrap"><div id="board"></div></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const DEFAULT_COLORS = [
+    "#ff6b6b", "#ffd93d", "#4f8cff", "#35c98f", "#c084fc"
+  ];
+  const BOARD_PADDING = 6;
+
+  const nameInput = document.getElementById("nameInput");
+  const widthInput = document.getElementById("widthInput");
+  const heightInput = document.getElementById("heightInput");
+  const movesInput = document.getElementById("movesInput");
+  const newGridBtn = document.getElementById("newGridBtn");
+  const modeGroup = document.getElementById("modeGroup");
+  const paletteEl = document.getElementById("palette");
+  const newPieceBtn = document.getElementById("newPieceBtn");
+  const statusEl = document.getElementById("status");
+  const boardWrapEl = document.getElementById("boardWrap");
+  const boardEl = document.getElementById("board");
+  const loadBtn = document.getElementById("loadBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const randomBtn = document.getElementById("randomBtn");
+  const fileInput = document.getElementById("fileInput");
+  const jsonPreview = document.getElementById("jsonPreview");
+  const mechanicSelect = document.getElementById("mechanicSelect");
+  const iceTurnsField = document.getElementById("iceTurnsField");
+  const iceTurnsInput = document.getElementById("iceTurnsInput");
+
+  const MIN_PIECE_SIZE = 1;
+  const MAX_PIECE_SIZE = 4; // matches prototype.html — 1x1 up to tetromino-sized
+
+  let COLORS = DEFAULT_COLORS.slice();
+  let W = 8, H = 8;
+  let cellPieceId = [];      // -1 = unassigned
+  let pieceColorOf = {};     // pieceId -> color index
+  let pieceMechanicOf = {};  // pieceId -> {type:'normal'|'hidden'|'ice', turns?}
+  let nextPieceId = 0;
+  let activePieceId = null;
+  let selectedColor = 0;
+  let selectedMechanic = "normal";
+  let selectedIceTurns = 3;
+  let mode = "draw";
+  let startIndex = 0;
+
+  function currentMechanic() {
+    return selectedMechanic === "ice"
+      ? { type: "ice", turns: selectedIceTurns }
+      : { type: selectedMechanic };
+  }
+
+  function idx(x, y) { return y * W + x; }
+
+  function neighborsOf(i) {
+    const x = i % W, y = Math.floor(i / W);
+    const list = [];
+    if (x > 0) list.push(i - 1);
+    if (x < W - 1) list.push(i + 1);
+    if (y > 0) list.push(i - W);
+    if (y < H - 1) list.push(i + W);
+    return list;
+  }
+
+  function newGrid(w, h) {
+    W = w; H = h;
+    cellPieceId = new Array(w * h).fill(-1);
+    pieceColorOf = {};
+    pieceMechanicOf = {};
+    nextPieceId = 0;
+    activePieceId = null;
+    startIndex = 0;
+    buildBoardDom();
+    render();
+  }
+
+  // Randomly tiles the current W×H grid with connected polyomino pieces —
+  // same algorithm as prototype.html's starter pack, so you get a quick
+  // random starting point to hand-edit instead of drawing from scratch.
+  function randomizeGrid() {
+    const total = W * H;
+    const pieceId = new Array(total).fill(-1);
+    let nextId = 0;
+
+    for (let start = 0; start < total; start++) {
+      if (pieceId[start] !== -1) continue;
+      const id = nextId++;
+      pieceId[start] = id;
+      const targetSize = MIN_PIECE_SIZE + Math.floor(Math.random() * (MAX_PIECE_SIZE - MIN_PIECE_SIZE + 1));
+      let frontier = neighborsOf(start).filter(n => pieceId[n] === -1);
+      let size = 1;
+      while (size < targetSize && frontier.length > 0) {
+        const pos = Math.floor(Math.random() * frontier.length);
+        const pick = frontier[pos];
+        frontier.splice(pos, 1);
+        if (pieceId[pick] !== -1) continue;
+        pieceId[pick] = id;
+        size++;
+        for (const n of neighborsOf(pick)) {
+          if (pieceId[n] === -1 && !frontier.includes(n)) frontier.push(n);
+        }
+      }
+    }
+
+    const colorOf = {};
+    const mechanicOf = {};
+    for (let p = 0; p < nextId; p++) {
+      colorOf[p] = Math.floor(Math.random() * COLORS.length);
+      mechanicOf[p] = { type: "normal" }; // random gen only ever produces plain pieces
+    }
+
+    cellPieceId = pieceId;
+    pieceColorOf = colorOf;
+    pieceMechanicOf = mechanicOf;
+    nextPieceId = nextId;
+    activePieceId = null;
+    startIndex = 0;
+    render();
+  }
+
+  function buildBoardDom() {
+    boardEl.innerHTML = "";
+    for (let i = 0; i < W * H; i++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      const mark = document.createElement("div");
+      mark.className = "startMark";
+      mark.textContent = "★";
+      cell.appendChild(mark);
+      const mech = document.createElement("div");
+      mech.className = "mechMark";
+      cell.appendChild(mech);
+      cell.addEventListener("click", () => onCellClick(i));
+      boardEl.appendChild(cell);
+    }
+    layoutBoard();
+  }
+
+  function layoutBoard() {
+    const wrapWidth = boardWrapEl.clientWidth;
+    const inner = Math.max(1, wrapWidth - BOARD_PADDING * 2);
+    const cellSize = Math.max(4, Math.floor(inner / W));
+    boardEl.style.width = (cellSize * W + BOARD_PADDING * 2) + "px";
+    boardEl.style.height = (cellSize * H + BOARD_PADDING * 2) + "px";
+    boardEl.style.gridTemplateColumns = `repeat(${W}, ${cellSize}px)`;
+    boardEl.style.gridTemplateRows = `repeat(${H}, ${cellSize}px)`;
+  }
+
+  function onCellClick(i) {
+    if (mode === "draw") {
+      if (cellPieceId[i] !== -1) return; // occupied — erase first
+      if (activePieceId === null) {
+        activePieceId = nextPieceId++;
+        pieceColorOf[activePieceId] = selectedColor;
+        pieceMechanicOf[activePieceId] = currentMechanic();
+      }
+      cellPieceId[i] = activePieceId;
+    } else if (mode === "erase") {
+      if (cellPieceId[i] === -1) return;
+      cellPieceId[i] = -1;
+    } else if (mode === "start") {
+      if (cellPieceId[i] === -1) {
+        alert("Ô này chưa thuộc khối nào — hãy vẽ khối trước khi đặt điểm khởi đầu.");
+        return;
+      }
+      startIndex = i;
+    }
+    render();
+  }
+
+  function computeEdge(a, b) {
+    if (b === null) return "outer";
+    if (cellPieceId[a] === cellPieceId[b]) return "none";
+    return "dark";
+  }
+
+  function edgeStyle(type) {
+    if (type === "dark" || type === "outer") return "1px solid rgba(0,0,0,0.5)";
+    return "none";
+  }
+
+  function render() {
+    const cells = boardEl.children;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = idx(x, y);
+        const cell = cells[i];
+        const pid = cellPieceId[i];
+        cell.style.background = pid === -1 ? "var(--empty)" : COLORS[pieceColorOf[pid]];
+        cell.classList.toggle("isStart", i === startIndex);
+
+        const mechEl = cell.children[1];
+        const mech = pid === -1 ? null : pieceMechanicOf[pid];
+        if (mech && mech.type === "hidden") mechEl.textContent = "?";
+        else if (mech && mech.type === "ice") mechEl.textContent = "❄" + mech.turns;
+        else mechEl.textContent = "";
+
+        const rightIdx = x < W - 1 ? idx(x + 1, y) : null;
+        const bottomIdx = y < H - 1 ? idx(x, y + 1) : null;
+        cell.style.borderTop = y === 0 ? edgeStyle(computeEdge(i, null)) : "none";
+        cell.style.borderLeft = x === 0 ? edgeStyle(computeEdge(i, null)) : "none";
+        cell.style.borderRight = edgeStyle(computeEdge(i, rightIdx));
+        cell.style.borderBottom = edgeStyle(computeEdge(i, bottomIdx));
+      }
+    }
+    renderPalette();
+    renderStatus();
+  }
+
+  function renderPalette() {
+    paletteEl.innerHTML = "";
+    COLORS.forEach((c, i) => {
+      const btn = document.createElement("button");
+      btn.className = "swatch" + (i === selectedColor ? " selected" : "");
+      btn.style.background = c;
+      btn.addEventListener("click", () => {
+        selectedColor = i;
+        if (activePieceId !== null) pieceColorOf[activePieceId] = i;
+        render();
+      });
+      paletteEl.appendChild(btn);
+    });
+  }
+
+  function renderStatus() {
+    const total = W * H;
+    const filledCount = cellPieceId.filter(v => v !== -1).length;
+    const gaps = total - filledCount;
+    const pieceCount = new Set(cellPieceId.filter(v => v !== -1)).size;
+    let html = `${pieceCount} khối đã vẽ · ${filledCount}/${total} ô đã gán.`;
+    if (gaps > 0) {
+      html += `<br><span class="warn">Còn ${gaps} ô trống — khi xuất JSON sẽ tự lấp bằng khối 1x1 màu đầu tiên trong bảng màu.</span>`;
+    } else {
+      html += `<br><span class="ok">Đã phủ kín lưới.</span>`;
+    }
+    statusEl.innerHTML = html;
+  }
+
+  function setMode(m) {
+    mode = m;
+    [...modeGroup.children].forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.mode === m);
+    });
+    if (m !== "draw") activePieceId = null; // switching away always seals the in-progress piece
+  }
+
+  modeGroup.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mode]");
+    if (!btn) return;
+    setMode(btn.dataset.mode);
+  });
+
+  newPieceBtn.addEventListener("click", () => {
+    activePieceId = null;
+  });
+
+  newGridBtn.addEventListener("click", () => {
+    const w = Math.max(2, Math.min(24, parseInt(widthInput.value, 10) || 8));
+    const h = Math.max(2, Math.min(24, parseInt(heightInput.value, 10) || 8));
+    if (cellPieceId.some(v => v !== -1)) {
+      if (!confirm("Tạo lưới mới sẽ xoá toàn bộ khối đang vẽ. Tiếp tục?")) return;
+    }
+    newGrid(w, h);
+  });
+
+  randomBtn.addEventListener("click", () => {
+    if (cellPieceId.some(v => v !== -1)) {
+      if (!confirm("Random hoá sẽ thay toàn bộ khối đang vẽ bằng khối ngẫu nhiên. Tiếp tục?")) return;
+    }
+    randomizeGrid();
+  });
+
+  mechanicSelect.addEventListener("change", () => {
+    selectedMechanic = mechanicSelect.value;
+    iceTurnsField.style.display = selectedMechanic === "ice" ? "" : "none";
+    if (activePieceId !== null) pieceMechanicOf[activePieceId] = currentMechanic();
+    render();
+  });
+
+  iceTurnsInput.addEventListener("input", () => {
+    selectedIceTurns = Math.max(1, parseInt(iceTurnsInput.value, 10) || 3);
+    if (activePieceId !== null && selectedMechanic === "ice") {
+      pieceMechanicOf[activePieceId] = currentMechanic();
+      render();
+    }
+  });
+
+  function buildExportConfig() {
+    const total = W * H;
+    const workingPieceId = cellPieceId.slice();
+    const workingColorOf = Object.assign({}, pieceColorOf);
+    const workingMechanicOf = Object.assign({}, pieceMechanicOf);
+    let synthNext = nextPieceId;
+    for (let i = 0; i < total; i++) {
+      if (workingPieceId[i] === -1) {
+        const pid = synthNext++;
+        workingPieceId[i] = pid;
+        workingColorOf[pid] = 0; // default fill color for unpainted gaps
+        workingMechanicOf[pid] = { type: "normal" };
+      }
+    }
+    const remap = new Map();
+    const pieceMap = new Array(total);
+    for (let i = 0; i < total; i++) {
+      const old = workingPieceId[i];
+      if (!remap.has(old)) remap.set(old, remap.size);
+      pieceMap[i] = remap.get(old);
+    }
+    const pieceColors = new Array(remap.size);
+    const pieceMechanics = new Array(remap.size);
+    for (const [oldId, newId] of remap.entries()) {
+      pieceColors[newId] = workingColorOf[oldId];
+      pieceMechanics[newId] = workingMechanicOf[oldId] || { type: "normal" };
+    }
+    return {
+      name: nameInput.value.trim() || "Level tuỳ chỉnh",
+      gridWidth: W,
+      gridHeight: H,
+      maxMoves: Math.max(1, parseInt(movesInput.value, 10) || 18),
+      startIndex: startIndex,
+      colors: COLORS,
+      pieceMap,
+      pieceColors,
+      pieceMechanics
+    };
+  }
+
+  exportBtn.addEventListener("click", () => {
+    const config = buildExportConfig();
+    const json = JSON.stringify(config, null, 2);
+    jsonPreview.value = json;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (config.name.replace(/[^a-z0-9-_]+/gi, "_") || "flood-level") + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  function loadConfigIntoEditor(cfg) {
+    const w = Number.isInteger(cfg.gridWidth) ? cfg.gridWidth : cfg.gridSize;
+    const h = Number.isInteger(cfg.gridHeight) ? cfg.gridHeight : cfg.gridSize;
+    if (!Number.isInteger(w) || !Number.isInteger(h) || !Array.isArray(cfg.pieceMap) || cfg.pieceMap.length !== w * h) {
+      throw new Error("File JSON không đúng định dạng level (thiếu gridWidth/gridHeight hoặc pieceMap sai độ dài).");
+    }
+    COLORS = Array.isArray(cfg.colors) && cfg.colors.length ? cfg.colors.slice() : DEFAULT_COLORS.slice();
+    W = w; H = h;
+    cellPieceId = cfg.pieceMap.slice();
+    pieceColorOf = {};
+    (cfg.pieceColors || []).forEach((c, i) => { pieceColorOf[i] = c; });
+    pieceMechanicOf = {};
+    (cfg.pieceMechanics || []).forEach((m, i) => {
+      pieceMechanicOf[i] = (m && ["normal", "hidden", "ice"].includes(m.type)) ? m : { type: "normal" };
+    });
+    (cfg.pieceColors || []).forEach((_, i) => {
+      if (!pieceMechanicOf[i]) pieceMechanicOf[i] = { type: "normal" };
+    });
+    nextPieceId = Math.max(0, ...cfg.pieceMap) + 1;
+    activePieceId = null;
+    startIndex = Number.isInteger(cfg.startIndex) ? cfg.startIndex : 0;
+    nameInput.value = cfg.name || "Level tuỳ chỉnh";
+    movesInput.value = cfg.maxMoves || 18;
+    widthInput.value = W;
+    heightInput.value = H;
+    buildBoardDom();
+    render();
+  }
+
+  loadBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const cfg = JSON.parse(String(reader.result));
+        loadConfigIntoEditor(cfg);
+      } catch (err) {
+        alert("Không tải được level: " + err.message);
+      }
+    };
+    reader.onerror = () => alert("Không đọc được file.");
+    reader.readAsText(file);
+    fileInput.value = "";
+  });
+
+  let resizePending = false;
+  window.addEventListener("resize", () => {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(() => {
+      resizePending = false;
+      layoutBoard();
+    });
+  });
+
+  newGrid(8, 8);
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Claude Code local settings
+.claude/settings.local.json
+
+# Ephemeral session state (per .claude/docs/context-management.md)
+production/session-state/
+production/session-logs/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.log
+
+# Node / Vercel
+node_modules/
+.vercel

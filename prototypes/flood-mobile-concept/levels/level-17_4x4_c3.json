@@ -1,0 +1,14 @@
+{
+  "name": "Level 17 (4x4, 3 mau)",
+  "gridWidth": 4,
+  "gridHeight": 4,
+  "maxMoves": 8,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff"
+  ],
+  "pieceMap": [0,1,2,2,0,1,1,2,0,1,3,2,4,4,3,5],
+  "pieceColors": [0,0,0,2,1,2]
+}

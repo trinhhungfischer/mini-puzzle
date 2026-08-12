@@ -1,0 +1,681 @@
+<!-- PROTOTYPE - NOT FOR PRODUCTION
+     Question: Does color-tiered nesting (drag smaller blocks into a bigger
+     container, Russian-doll style, with "skip-tier" packing allowed) feel
+     satisfying and clear?
+     Date: 2026-08-12
+
+     MODEL: every piece IS a square box. The box is what collides and what
+     holds other pieces -- inner and outer are the same box for every shape.
+     The circle/triangle/square art is a motif drawn inside that box, not a
+     collision shape. The box is drawn so this is visible, never implied.
+
+     Portrait mobile-web layout: the SVG user space is a fixed 1080x1920 and
+     scales to whatever screen it lands on.
+-->
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Nesting Blocks Prototype</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #1e1e24;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+  header, footer { flex: none; padding: 6px 10px; }
+  h1 { font-size: 16px; margin: 0; }
+  p.hint { color: #999; margin: 2px 0 0; font-size: 12px; line-height: 1.3; }
+  #levelLabel { font-size: 13px; color: #ffb347; margin-top: 3px; }
+
+  /* The stage owns whatever height is left after header/footer; the SVG is
+     absolutely positioned inside it so it can never push the layout taller
+     than the viewport (which was clipping the bottom of the tray). */
+  #stage { flex: 1 1 0; min-height: 0; position: relative; }
+  svg#world {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    touch-action: none;   /* pointer events only -- no scroll/zoom hijack */
+  }
+
+  .piece { cursor: grab; }
+  .piece.dragging { cursor: grabbing; }
+  .piece.settling { transition: transform 90ms ease-out; }
+
+  /* The box: the thing that actually collides and contains. */
+  .box { stroke-width: 3; }
+  .motif { pointer-events: none; }
+  .piece.resolved .box { stroke-opacity: 0.9; }
+  .piece.valid   .box { stroke: #4ade80 !important; stroke-width: 6; }
+  .piece.invalid .box { stroke: #ef4444 !important; stroke-width: 6; }
+
+  .hitbox { fill: none; stroke: #ff00ff; stroke-width: 3; stroke-dasharray: 10 8; display: none; pointer-events: none; }
+  body.show-hitbox .hitbox { display: block; }
+
+  #guide { fill: none; stroke: rgba(255,255,255,0.6); stroke-width: 4; stroke-dasharray: 12 10; pointer-events: none; }
+
+  #status { font-size: 15px; min-height: 20px; color: #eee; }
+  #status.win { color: #4ade80; font-weight: bold; }
+
+  .btnrow { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  button {
+    min-height: 44px; padding: 0 18px; font-size: 15px;
+    background: #333; color: #eee;
+    border: 1px solid #555; border-radius: 8px;
+    cursor: pointer;
+  }
+  #nextLevelBtn { display: none; background: #4ade80; color: #10321f; font-weight: bold; border: none; }
+  label.toggle { font-size: 13px; color: #999; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+  label.toggle input { width: 20px; height: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Nesting Blocks — Concept Prototype</h1>
+  <p class="hint">Moi khoi la mot cai HOP. Long hop nho vao hop to (ke ca khi con o khay), roi xep tat ca vao khung cam.</p>
+  <div id="levelLabel"></div>
+</header>
+
+<div id="stage">
+  <svg id="world" viewBox="0 0 1080 1780" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <rect id="boardStroke" fill="rgba(255,140,0,0.06)" stroke="#ff8c00" stroke-width="8" rx="10"/>
+    <text id="trayLabel" fill="#888" font-size="30" font-family="system-ui, sans-serif">Khay khoi — lap ghep duoc ngay tai day</text>
+    <g id="lyBlue"></g>
+    <g id="guideLayer"></g>
+    <g id="lyGreen"></g>
+  </svg>
+</div>
+
+<footer>
+  <div id="status"></div>
+  <div class="btnrow">
+    <button id="resetBtn">Reset</button>
+    <button id="nextLevelBtn">Level tiep &rarr;</button>
+    <label class="toggle"><input type="checkbox" id="hitboxToggle"> Hien hitbox</label>
+  </div>
+</footer>
+
+<script>
+// ---------------------------------------------------------------------------
+// Constants -- SVG user space is a fixed 1080x1920 portrait canvas.
+// ---------------------------------------------------------------------------
+// Canvas height is sized so the tallest level (3 tray rows of greens + the
+// blue row) fits without spilling past the bottom edge. Board 640 = 4 greens
+// across = 2 blues across, so everything divides cleanly.
+const CANVAS_W = 1080, CANVAS_H = 1780;
+
+const GREEN = 160;
+const BLUE  = 320;
+const BOARD = 640;
+const BOARD_X = (CANVAS_W - BOARD) / 2;   // 220
+const BOARD_Y = 40;
+
+// Divides every size in play (160 / 400 / 800), so every flush-packed
+// position is reachable.
+const GRID = 40;
+
+const EPS = 0.5;          // boxes may touch; only real penetration collides
+const BOARD_KEEPOUT = 20; // parked pieces must clear the board's outer stroke
+
+const LEVELS = [
+  { green: 8 },
+  { green: 12 },  // board strip alone holds 10 -- level 2 forces nesting
+];
+
+// ---------------------------------------------------------------------------
+// Geometry
+//
+// ONE box model: a piece's box is both what it occupies and what it can hold.
+// geomOf() is the single place that decides this. To go back to
+// shape-accurate collision, return the shape path here instead -- everything
+// downstream (SAT overlap, containment) already handles arbitrary convex
+// shapes and circles.
+// ---------------------------------------------------------------------------
+function motifPath(shape, size) {
+  if (shape === 'triangle') return [[size/2, 0], [size, size], [0, size]];
+  return [[0,0], [size,0], [size,size], [0,size]];
+}
+
+function rectGeom(x, y, w, h) {
+  return { kind: 'poly', pts: [[x,y],[x+w,y],[x+w,y+h],[x,y+h]] };
+}
+
+// The box. Same for every shape, inner and outer alike.
+function geomOf(piece, x, y) { return rectGeom(x, y, piece.size, piece.size); }
+
+function edgeNormals(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    const ex = b[0]-a[0], ey = b[1]-a[1];
+    const len = Math.hypot(ex, ey);
+    if (len < 1e-9) continue;
+    out.push({ x: -ey/len, y: ex/len });
+  }
+  return out;
+}
+
+function nearestVertexAxis(circle, pts) {
+  let bx = 0, by = 0, best = Infinity;
+  for (const p of pts) {
+    const dx = p[0]-circle.cx, dy = p[1]-circle.cy;
+    const d = dx*dx + dy*dy;
+    if (d < best) { best = d; bx = dx; by = dy; }
+  }
+  const len = Math.hypot(bx, by);
+  return len < 1e-9 ? null : { x: bx/len, y: by/len };
+}
+
+function project(shape, ax) {
+  if (shape.kind === 'circle') {
+    const c = shape.cx*ax.x + shape.cy*ax.y;
+    return { min: c - shape.r, max: c + shape.r };
+  }
+  let min = Infinity, max = -Infinity;
+  for (const p of shape.pts) {
+    const v = p[0]*ax.x + p[1]*ax.y;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return { min, max };
+}
+
+// True only on genuine penetration; touching (overlap <= EPS) is allowed.
+function shapesOverlap(a, b) {
+  const axes = [];
+  if (a.kind === 'poly') axes.push(...edgeNormals(a.pts));
+  if (b.kind === 'poly') axes.push(...edgeNormals(b.pts));
+  if (a.kind === 'circle' && b.kind === 'poly') { const ax = nearestVertexAxis(a, b.pts); if (ax) axes.push(ax); }
+  if (b.kind === 'circle' && a.kind === 'poly') { const ax = nearestVertexAxis(b, a.pts); if (ax) axes.push(ax); }
+  if (a.kind === 'circle' && b.kind === 'circle') {
+    const dx = b.cx-a.cx, dy = b.cy-a.cy, len = Math.hypot(dx, dy);
+    if (len < 1e-9) return true;
+    axes.push({ x: dx/len, y: dy/len });
+  }
+  for (const ax of axes) {
+    const pa = project(a, ax), pb = project(b, ax);
+    if (Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min) <= EPS) return false;
+  }
+  return true;
+}
+
+function edgePlanes(pts) {
+  const cx = pts.reduce((s,p) => s+p[0], 0) / pts.length;
+  const cy = pts.reduce((s,p) => s+p[1], 0) / pts.length;
+  const planes = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    const ex = b[0]-a[0], ey = b[1]-a[1];
+    const len = Math.hypot(ex, ey);
+    if (len < 1e-9) continue;
+    let n = { x: -ey/len, y: ex/len };
+    let d = n.x*a[0] + n.y*a[1];
+    if (n.x*cx + n.y*cy > d) { n = { x: -n.x, y: -n.y }; d = -d; }
+    planes.push({ n, d });
+  }
+  return planes;
+}
+
+function shapeContains(container, inner) {
+  const tol = 1e-6;
+  if (container.kind === 'poly') {
+    for (const { n, d } of edgePlanes(container.pts)) {
+      if (inner.kind === 'poly') {
+        for (const p of inner.pts) if (n.x*p[0] + n.y*p[1] > d + tol) return false;
+      } else {
+        if (n.x*inner.cx + n.y*inner.cy + inner.r > d + tol) return false;
+      }
+    }
+    return true;
+  }
+  if (inner.kind === 'poly') {
+    for (const p of inner.pts) {
+      if (Math.hypot(p[0]-container.cx, p[1]-container.cy) > container.r + tol) return false;
+    }
+    return true;
+  }
+  return Math.hypot(inner.cx-container.cx, inner.cy-container.cy) + inner.r <= container.r + tol;
+}
+
+function pointInShape(shape, px, py) {
+  if (shape.kind === 'circle') return Math.hypot(px-shape.cx, py-shape.cy) <= shape.r;
+  for (const { n, d } of edgePlanes(shape.pts)) if (n.x*px + n.y*py > d + 1e-6) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const svg = document.getElementById('world');
+const lyBlue = document.getElementById('lyBlue');
+const lyGreen = document.getElementById('lyGreen');
+const guideLayer = document.getElementById('guideLayer');
+const statusEl = document.getElementById('status');
+const levelLabelEl = document.getElementById('levelLabel');
+const nextLevelBtn = document.getElementById('nextLevelBtn');
+
+let pieces = [];
+let currentLevel = 0;
+let drag = null;
+
+const boardGeom = () => rectGeom(BOARD_X, BOARD_Y, BOARD, BOARD);
+const boardKeepOut = () => rectGeom(
+  BOARD_X - BOARD_KEEPOUT, BOARD_Y - BOARD_KEEPOUT,
+  BOARD + BOARD_KEEPOUT*2, BOARD + BOARD_KEEPOUT*2);
+
+function worldPos(p) {
+  if (!p.parent) return { x: p.x, y: p.y };
+  const w = worldPos(p.parent);
+  return { x: w.x + p.localX, y: w.y + p.localY };
+}
+function worldGeom(p) {
+  const w = worldPos(p);
+  return geomOf(p, w.x, w.y);
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function boxNode(size, cls) {
+  const n = document.createElementNS(SVG_NS, 'rect');
+  n.setAttribute('x', 0); n.setAttribute('y', 0);
+  n.setAttribute('width', size); n.setAttribute('height', size);
+  n.setAttribute('rx', 8);
+  n.setAttribute('class', cls);
+  return n;
+}
+
+function motifNode(piece, color) {
+  let n;
+  if (piece.shape === 'circle') {
+    n = document.createElementNS(SVG_NS, 'circle');
+    n.setAttribute('cx', piece.size/2);
+    n.setAttribute('cy', piece.size/2);
+    n.setAttribute('r', piece.size/2);
+  } else {
+    n = document.createElementNS(SVG_NS, 'polygon');
+    n.setAttribute('points', motifPath(piece.shape, piece.size).map(p => p.join(',')).join(' '));
+  }
+  n.setAttribute('fill', color);
+  n.setAttribute('class', 'motif');
+  return n;
+}
+
+function makePiece(color, shape, x, y) {
+  const size = color === 'blue' ? BLUE : GREEN;
+  const solid = color === 'blue' ? '#60a5fa' : '#34d399';
+  const g = document.createElementNS(SVG_NS, 'g');
+  g.setAttribute('class', 'piece');
+
+  const piece = {
+    el: g, color, shape, size,
+    x, y, homeX: x, homeY: y,
+    onBoard: false, parent: null, localX: 0, localY: 0,
+    children: color === 'blue' ? [] : null
+  };
+
+  // Box first (translucent, outlined) then the motif on top -- the box is
+  // the piece, the motif just says which shape it is.
+  const box = boxNode(size, 'box');
+  box.setAttribute('fill', solid);
+  box.setAttribute('fill-opacity', 0.22);
+  box.setAttribute('stroke', solid);
+  box.setAttribute('stroke-opacity', 0.55);
+  g.appendChild(box);
+  g.appendChild(motifNode(piece, solid));
+  g.appendChild(boxNode(size, 'hitbox'));   // debug overlay == the same box
+
+  (color === 'blue' ? lyBlue : lyGreen).appendChild(g);
+  g.addEventListener('pointerdown', (e) => onPointerDown(e, piece));
+
+  pieces.push(piece);
+  render(piece);
+  return piece;
+}
+
+function render(p) {
+  const w = worldPos(p);
+  p.el.setAttribute('transform', `translate(${w.x} ${w.y})`);
+  p.el.classList.toggle('resolved', isResolved(p));
+  if (p.children) p.children.forEach(render);
+}
+function renderAll() { pieces.filter(p => !p.parent).forEach(render); }
+
+// Outlines the container's interior while dragging over it.
+function showGuide(container) {
+  guideLayer.textContent = '';
+  if (!container) return;
+  const w = worldPos(container);
+  const n = document.createElementNS(SVG_NS, 'rect');
+  n.setAttribute('x', w.x); n.setAttribute('y', w.y);
+  n.setAttribute('width', container.size); n.setAttribute('height', container.size);
+  n.setAttribute('rx', 8);
+  n.setAttribute('id', 'guide');
+  guideLayer.appendChild(n);
+}
+function hideGuide() { guideLayer.textContent = ''; }
+
+// ---------------------------------------------------------------------------
+// Placement validity
+// ---------------------------------------------------------------------------
+function collidesWithOthers(piece, g) {
+  for (const other of pieces) {
+    if (other === piece || other.parent) continue;
+    if (shapesOverlap(g, worldGeom(other))) return true;
+  }
+  return false;
+}
+
+function validOnBoard(piece, x, y) {
+  const g = geomOf(piece, x, y);
+  return shapeContains(boardGeom(), g) && !collidesWithOthers(piece, g);
+}
+
+function validInside(piece, container, x, y) {
+  const g = geomOf(piece, x, y);
+  if (!shapeContains(worldGeom(container), g)) return false;
+  for (const child of container.children) {
+    if (child === piece) continue;
+    if (shapesOverlap(g, worldGeom(child))) return false;
+  }
+  return true;
+}
+
+// Free placement anywhere outside the board, so a whole assembly can be
+// built in the tray before being carried in.
+function validStaged(piece, x, y) {
+  if (x < 0 || y < 0 || x + piece.size > CANVAS_W || y + piece.size > CANVAS_H) return false;
+  const g = geomOf(piece, x, y);
+  if (shapesOverlap(g, boardKeepOut())) return false;
+  return !collidesWithOthers(piece, g);
+}
+
+function containerUnder(px, py, exclude) {
+  for (const p of pieces) {
+    if (p.color !== 'blue' || p === exclude) continue;
+    if (pointInShape(worldGeom(p), px, py)) return p;
+  }
+  return null;
+}
+
+function snap(v, origin) { return origin + Math.round((v - origin) / GRID) * GRID; }
+
+// The piece goes exactly where it is aimed (grid-snapped) or nowhere. No
+// hunting for a nearby free slot: invalid means it bounces back.
+function planDrop(piece, rawX, rawY) {
+  const cx = rawX + piece.size/2, cy = rawY + piece.size/2;
+
+  if (piece.color === 'green') {
+    const c = containerUnder(cx, cy, piece);
+    if (c) {
+      const cw = worldPos(c);
+      const x = snap(rawX, cw.x), y = snap(rawY, cw.y);
+      return validInside(piece, c, x, y)
+        ? { kind: 'nest', container: c, x, y }
+        : { kind: 'none', container: c };
+    }
+  }
+
+  if (pointInShape(boardGeom(), cx, cy)) {
+    const x = snap(rawX, BOARD_X), y = snap(rawY, BOARD_Y);
+    return validOnBoard(piece, x, y) ? { kind: 'board', x, y } : { kind: 'none' };
+  }
+
+  const x = snap(rawX, 0), y = snap(rawY, 0);
+  return validStaged(piece, x, y) ? { kind: 'stage', x, y } : { kind: 'none' };
+}
+
+// ---------------------------------------------------------------------------
+// Commit / detach
+// ---------------------------------------------------------------------------
+function detach(piece) {
+  if (!piece.parent) return;
+  const w = worldPos(piece);
+  const sib = piece.parent.children;
+  sib.splice(sib.indexOf(piece), 1);
+  piece.parent = null;
+  piece.x = w.x; piece.y = w.y;
+}
+
+function commit(piece, plan) {
+  if (plan.kind === 'nest') {
+    const cw = worldPos(plan.container);
+    piece.parent = plan.container;
+    piece.localX = plan.x - cw.x;
+    piece.localY = plan.y - cw.y;
+    piece.onBoard = false;
+    plan.container.children.push(piece);
+  } else if (plan.kind === 'board') {
+    piece.x = plan.x; piece.y = plan.y; piece.onBoard = true;
+  } else if (plan.kind === 'stage') {
+    piece.x = plan.x; piece.y = plan.y; piece.onBoard = false;
+  } else {
+    return false;
+  }
+  render(piece);
+  return true;
+}
+
+function restore(piece, prev) {
+  if (prev && prev.parent) {
+    const cw = worldPos(prev.parent);
+    commit(piece, { kind:'nest', container: prev.parent, x: cw.x + prev.lx, y: cw.y + prev.ly });
+  } else if (prev) {
+    commit(piece, { kind: prev.onBoard ? 'board' : 'stage', x: prev.x, y: prev.y });
+  } else {
+    commit(piece, { kind:'stage', x: piece.homeX, y: piece.homeY });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dragging (pointer events -- mouse and touch alike)
+// ---------------------------------------------------------------------------
+// getScreenCTM handles whatever scaling/letterboxing the responsive layout
+// ends up with, so this is correct on any screen size.
+function svgPoint(e) {
+  const pt = svg.createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return { x: p.x, y: p.y };
+}
+
+function onPointerDown(e, piece) {
+  e.preventDefault();
+  const prev = piece.parent
+    ? { parent: piece.parent, lx: piece.localX, ly: piece.localY }
+    : { x: piece.x, y: piece.y, onBoard: piece.onBoard };
+
+  detach(piece);
+  piece.onBoard = false;
+
+  const p = svgPoint(e);
+  drag = { piece, dx: p.x - piece.x, dy: p.y - piece.y, prev, plan: null };
+
+  piece.el.classList.remove('settling', 'resolved');
+  piece.el.classList.add('dragging');
+  piece.el.parentNode.appendChild(piece.el);
+  svg.setPointerCapture(e.pointerId);
+}
+
+function onPointerMove(e) {
+  if (!drag) return;
+  const p = svgPoint(e);
+  const rawX = p.x - drag.dx, rawY = p.y - drag.dy;
+  const piece = drag.piece;
+
+  piece.x = rawX; piece.y = rawY;   // tracks the finger/cursor exactly
+  render(piece);
+
+  const plan = planDrop(piece, rawX, rawY);
+  drag.plan = plan;
+  showGuide(plan.container || (piece.color === 'green'
+    ? containerUnder(rawX + piece.size/2, rawY + piece.size/2, piece) : null));
+
+  const ok = plan.kind !== 'none';
+  piece.el.classList.toggle('valid', ok);
+  piece.el.classList.toggle('invalid', !ok);
+}
+
+function onPointerUp() {
+  if (!drag) return;
+  const piece = drag.piece;
+  const plan = drag.plan || planDrop(piece, piece.x, piece.y);
+
+  piece.el.classList.remove('dragging', 'valid', 'invalid');
+  piece.el.classList.add('settling');
+  hideGuide();
+
+  if (!commit(piece, plan)) restore(piece, drag.prev);
+
+  drag = null;
+  renderAll();
+  checkWin();
+}
+
+svg.addEventListener('pointermove', onPointerMove);
+svg.addEventListener('pointerup', onPointerUp);
+svg.addEventListener('pointercancel', onPointerUp);
+
+// ---------------------------------------------------------------------------
+// Win / levels
+// ---------------------------------------------------------------------------
+function isResolved(p) { return p.parent ? isResolved(p.parent) : p.onBoard; }
+
+function checkWin() {
+  const won = pieces.length > 0 && pieces.every(isResolved);
+  document.getElementById('boardStroke').setAttribute('stroke', won ? '#4ade80' : '#ff8c00');
+  if (won) {
+    const more = currentLevel < LEVELS.length - 1;
+    statusEl.textContent = more
+      ? `Level ${currentLevel+1} Complete!`
+      : `Level ${currentLevel+1} Complete! Da het level.`;
+    statusEl.classList.add('win');
+    nextLevelBtn.style.display = more ? 'inline-block' : 'none';
+  } else {
+    statusEl.textContent = '';
+    statusEl.classList.remove('win');
+    nextLevelBtn.style.display = 'none';
+  }
+  return won;
+}
+
+function buildLevel() {
+  lyBlue.textContent = ''; lyGreen.textContent = ''; hideGuide();
+  pieces = []; drag = null;
+
+  const bs = document.getElementById('boardStroke');
+  bs.setAttribute('x', BOARD_X - 4); bs.setAttribute('y', BOARD_Y - 4);
+  bs.setAttribute('width', BOARD + 8); bs.setAttribute('height', BOARD + 8);
+  bs.setAttribute('stroke', '#ff8c00');
+
+  const cfg = LEVELS[currentLevel];
+  const shapes = ['square', 'circle', 'triangle'];
+  const perRow = 5, gap = 40;
+
+  const label = document.getElementById('trayLabel');
+  label.setAttribute('x', 60); label.setAttribute('y', BOARD_Y + BOARD + 60);
+
+  let y = BOARD_Y + BOARD + 100;
+  for (let i = 0; i < cfg.green; i++) {
+    const col = i % perRow;
+    if (i > 0 && col === 0) y += GREEN + gap;
+    makePiece('green', shapes[i % shapes.length], 60 + col * (GREEN + gap), y);
+  }
+  y += GREEN + gap * 2;
+
+  ['square', 'circle'].forEach((s, i) => makePiece('blue', s, 60 + i * (BLUE + gap), y));
+
+  levelLabelEl.textContent =
+    `Level ${currentLevel+1} / ${LEVELS.length} — ${cfg.green} hop xanh la + 2 hop xanh duong`;
+  checkWin();
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios (deterministic screenshots: ?scenario=NAME&level=N&hitbox=1)
+// ---------------------------------------------------------------------------
+function put(piece, rawX, rawY) { return commit(piece, planDrop(piece, rawX, rawY)); }
+
+// 2x2 fills a blue box exactly (320 = 2 x 160).
+const QUAD = [[0,0],[GREEN,0],[0,GREEN],[GREEN,GREEN]];
+function nestSome() {
+  const g = pieces.filter(p => p.color === 'green');
+  const bSq = pieces.find(p => p.color==='blue' && p.shape==='square');
+  const bCi = pieces.find(p => p.color==='blue' && p.shape==='circle');
+  const sw = worldPos(bSq), cw = worldPos(bCi);
+  QUAD.forEach(([lx,ly], i) => put(g[i], sw.x+lx, sw.y+ly));
+  QUAD.forEach(([lx,ly], i) => put(g[4+i], cw.x+lx, cw.y+ly));
+}
+
+function autoSolve() {
+  const g = pieces.filter(p => p.color === 'green');
+  const bSq = pieces.find(p => p.color==='blue' && p.shape==='square');
+  const bCi = pieces.find(p => p.color==='blue' && p.shape==='circle');
+  let i = 0;
+  if (g.length > 10) { nestSome(); i = 8; }
+  put(bSq, BOARD_X, BOARD_Y);
+  put(bCi, BOARD_X + BLUE, BOARD_Y);
+  const cols = BOARD / GREEN;                    // 4 greens across the board
+  const rows = (BOARD - BLUE) / GREEN;           // strip left under the blues
+  for (let r = 0; r < rows && i < g.length; r++) {
+    for (let c = 0; c < cols && i < g.length; c++) {
+      put(g[i], BOARD_X + c*GREEN, BOARD_Y + BLUE + r*GREEN); i++;
+    }
+  }
+  renderAll(); checkWin();
+}
+
+const SCENARIOS = {
+  tray: () => {},
+  nest: () => { nestSome(); renderAll(); },
+  solved: () => autoSolve(),
+  guide: () => { showGuide(pieces.find(p => p.color==='blue' && p.shape==='circle')); },
+};
+
+function applyUrlScenario() {
+  const q = new URLSearchParams(location.search);
+  const lvl = parseInt(q.get('level'), 10);
+  if (lvl >= 1 && lvl <= LEVELS.length) { currentLevel = lvl - 1; buildLevel(); }
+  if (q.get('hitbox') === '1') {
+    document.body.classList.add('show-hitbox');
+    document.getElementById('hitboxToggle').checked = true;
+  }
+  const s = q.get('scenario');
+  if (s && SCENARIOS[s]) SCENARIOS[s]();
+}
+
+document.getElementById('resetBtn').addEventListener('click', buildLevel);
+nextLevelBtn.addEventListener('click', () => {
+  if (currentLevel < LEVELS.length - 1) { currentLevel++; buildLevel(); }
+});
+document.getElementById('hitboxToggle').addEventListener('change', (e) => {
+  document.body.classList.toggle('show-hitbox', e.target.checked);
+});
+
+buildLevel();
+applyUrlScenario();
+
+window.DBG = {
+  get pieces() { return pieces; },
+  get level() { return currentLevel; },
+  set level(v) { currentLevel = v; buildLevel(); },
+  geomOf, worldGeom, worldPos, rectGeom, boardGeom, boardKeepOut, shapesOverlap,
+  shapeContains, pointInShape, validOnBoard, validInside, validStaged,
+  planDrop, commit, put, detach, isResolved, checkWin, buildLevel,
+  containerUnder, snap, autoSolve, nestSome, renderAll, svgPoint,
+  GRID, EPS, GREEN, BLUE, BOARD, BOARD_X, BOARD_Y, CANVAS_W, CANVAS_H, LEVELS
+};
+</script>
+</body>
+</html>
