@@ -20,8 +20,7 @@ Date: 2026-08-11
     --accent: #4f8cff;
     --win: #35c98f;
     --lose: #ff5c5c;
-    --hidden-bg: #3a4252;
-    --ice-tint: rgba(160, 220, 255, 0.45);
+    --hidden-bg: #8b919b;
     color-scheme: dark;
   }
 
@@ -109,6 +108,11 @@ Date: 2026-08-11
 
   .cell {
     position: relative;
+    /* Above #territoryLayer so per-cell marks (★, ?, ice countdown) stay
+       readable — the overlay would otherwise paint over them. The overlay
+       still shows through in the grid gaps, which is all it needs for the
+       bridges and the surrounding outline. */
+    z-index: 1;
     border-radius: 6px;
     transition: background-color 120ms ease, border-color 120ms ease;
   }
@@ -121,6 +125,29 @@ Date: 2026-08-11
   .bridge {
     position: absolute;
     pointer-events: none;
+  }
+
+  /* The captured region is redrawn as one composite shape on its own layer
+     (its cells + the bridges between them), so the chained drop-shadow
+     filter can trace a single continuous white line all the way around the
+     region's real outer perimeter — around the bridges too. A per-cell CSS
+     border cannot do this: it paints inside each cell's own box and breaks
+     at every grid gap. Chaining 4 axis drop-shadows dilates the shape's
+     alpha by a square, which reads as an even outline hugging the rounded
+     corners. */
+  #territoryLayer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    filter:
+      drop-shadow(3px 0 0 #ffffff)
+      drop-shadow(-3px 0 0 #ffffff)
+      drop-shadow(0 3px 0 #ffffff)
+      drop-shadow(0 -3px 0 #ffffff);
+  }
+
+  #territoryLayer .tshape {
+    position: absolute;
   }
 
   .cell .glyph {
@@ -136,8 +163,49 @@ Date: 2026-08-11
     font-size: 0.85em;
   }
 
-  .cell.frozen {
-    box-shadow: inset 0 0 0 999px var(--ice-tint);
+  /* Frozen blocks: a translucent frost sheet over the piece's real colour
+     (the colour still has to read through, since knowing it is what makes
+     an ice block worth planning around) plus diagonal crystal streaks and
+     a bright top edge to sell the "sheet of ice" look. Drawn as ::before so
+     the countdown glyph, a later child, stays on top of it. */
+  .cell.frozen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(
+        125deg,
+        rgba(255, 255, 255, 0.38) 0px, rgba(255, 255, 255, 0.38) 2px,
+        rgba(255, 255, 255, 0) 2px, rgba(255, 255, 255, 0) 7px
+      ),
+      linear-gradient(
+        150deg,
+        rgba(232, 249, 255, 0.62) 0%,
+        rgba(150, 205, 240, 0.48) 55%,
+        rgba(205, 240, 255, 0.60) 100%
+      );
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.75),
+      inset 0 -3px 5px rgba(70, 130, 175, 0.45);
+  }
+
+  /* Same frost over the gap-filling bridges, so a multi-cell ice block
+     freezes as one sheet instead of showing untinted seams. */
+  .bridge.frozen {
+    background-image:
+      repeating-linear-gradient(
+        125deg,
+        rgba(255, 255, 255, 0.38) 0px, rgba(255, 255, 255, 0.38) 2px,
+        rgba(255, 255, 255, 0) 2px, rgba(255, 255, 255, 0) 7px
+      ),
+      linear-gradient(
+        150deg,
+        rgba(232, 249, 255, 0.62) 0%,
+        rgba(150, 205, 240, 0.48) 55%,
+        rgba(205, 240, 255, 0.60) 100%
+      );
   }
 
   #palette {
@@ -276,7 +344,7 @@ Date: 2026-08-11
     <button id="retryBtn">Chơi lại</button>
     <button id="nextBtn">Next</button>
     <button id="backBtn">Back</button>
-    <a id="editorLink" href="editor.html" target="_blank" rel="noopener">Mở Editor</a>
+    <a id="editorLink" href="editor.html">Mở Editor</a>
   </div>
   <div id="levelLabel"></div>
   <button id="loadLink">Tải level JSON khác…</button>
@@ -345,12 +413,12 @@ Date: 2026-08-11
 
   // ---- Derived per-level structure (rebuilt whenever cellPieceId changes) ----
   let pieceCells = [];     // pieceId -> [cell indices]
-  let pieceLabelCell = []; // pieceId -> single "center" cell used for the glyph ("?" / ice countdown)
 
   // ---- DOM bookkeeping for rendering ----
   let cellEls = [];        // cell index -> its .cell element (indexed directly, not via boardEl.children,
                             // since .bridge filler elements also live in #board as siblings)
-  let bridgeEls = [];      // .bridge elements created by the current renderBoard() pass, for cleanup
+  let bridgeEls = [];      // board-level .bridge elements from the current renderBoard() pass, for cleanup
+  let territoryLayer = null; // overlay holding the captured region's composite shape (see CSS #territoryLayer)
   let currentCellSize = 0; // last computed pixel size per cell, from layoutBoard() — reused to position bridges
 
   // ---- Per-play state ----
@@ -438,29 +506,13 @@ Date: 2026-08-11
     return levels;
   }
 
-  // Rebuilds the piece -> cells lookup and a single "label cell" per piece
-  // (the piece's own cell closest to its shape's centroid) used to place the
-  // "?" / ice-countdown glyph once per block instead of once per cell.
+  // Rebuilds the piece -> cells lookup, used for hidden-reveal checks and
+  // the ice-countdown array (one entry per piece).
   function buildPieceIndex() {
     const count = cellPieceId.reduce((m, v) => Math.max(m, v), -1) + 1;
     pieceCells = new Array(count);
     for (let p = 0; p < count; p++) pieceCells[p] = [];
     for (let i = 0; i < cellPieceId.length; i++) pieceCells[cellPieceId[i]].push(i);
-
-    pieceLabelCell = new Array(count);
-    for (let p = 0; p < count; p++) {
-      const cells = pieceCells[p];
-      let sx = 0, sy = 0;
-      for (const c of cells) { sx += c % W; sy += Math.floor(c / W); }
-      const cx = sx / cells.length, cy = sy / cells.length;
-      let best = cells[0], bestDist = Infinity;
-      for (const c of cells) {
-        const dx = (c % W) - cx, dy = Math.floor(c / W) - cy;
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; best = c; }
-      }
-      pieceLabelCell[p] = best;
-    }
   }
 
   function isPieceFrozen(p) {
@@ -521,6 +573,11 @@ Date: 2026-08-11
       boardEl.appendChild(cell);
       cellEls.push(cell);
     }
+    // Appended last so it paints above the cells — it redraws the captured
+    // region on top of them and carries the outline filter.
+    territoryLayer = document.createElement("div");
+    territoryLayer.id = "territoryLayer";
+    boardEl.appendChild(territoryLayer);
     layoutBoard();
   }
 
@@ -552,16 +609,31 @@ Date: 2026-08-11
     return filled.has(i) ? "F" : cellPieceId[i];
   }
 
-  function addBridge(left, top, w, h, color) {
+  function addBridge(parent, left, top, w, h, color, frozen) {
     const b = document.createElement("div");
-    b.className = "bridge";
+    b.className = "bridge" + (frozen ? " frozen" : "");
     b.style.left = left + "px";
     b.style.top = top + "px";
     b.style.width = w + "px";
     b.style.height = h + "px";
     b.style.background = color;
-    boardEl.appendChild(b);
-    bridgeEls.push(b);
+    parent.appendChild(b);
+    if (parent === boardEl) bridgeEls.push(b);
+  }
+
+  // Redraws one captured cell onto the territory overlay at the same place
+  // and shape as the real cell, so the overlay's union matches the region
+  // exactly and the outline filter traces its true perimeter.
+  function addTerritoryCell(left, top, size, radius, color) {
+    const t = document.createElement("div");
+    t.className = "tshape";
+    t.style.left = left + "px";
+    t.style.top = top + "px";
+    t.style.width = size + "px";
+    t.style.height = size + "px";
+    t.style.borderRadius = radius;
+    t.style.background = color;
+    territoryLayer.appendChild(t);
   }
 
   // Renders cells and, for every pair of same-group orthogonal neighbors,
@@ -578,6 +650,7 @@ Date: 2026-08-11
 
     bridgeEls.forEach(el => el.remove());
     bridgeEls = [];
+    territoryLayer.innerHTML = "";
 
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
@@ -594,13 +667,13 @@ Date: 2026-08-11
         cell.style.background = color;
         cell.classList.toggle("frozen", isFrozen);
 
-        if (i === pieceLabelCell[p]) {
-          if (isConcealed) glyph.textContent = "?";
-          else if (isFrozen) glyph.textContent = String(iceRemaining[p]);
-          else glyph.textContent = "";
-        } else {
-          glyph.textContent = "";
-        }
+        // Marks repeat on every cell of a piece rather than once at its
+        // centre, so the whole block reads as "hidden"/"frozen" at a glance
+        // no matter which part of it you look at.
+        if (isConcealed) glyph.textContent = "?";
+        else if (isFrozen) glyph.textContent = String(iceRemaining[p]);
+        else if (i === startIndex) glyph.textContent = "★";
+        else glyph.textContent = "";
 
         const g = groupOf(i);
         const topI = y > 0 ? idx(x, y - 1) : null;
@@ -626,21 +699,32 @@ Date: 2026-08-11
         const flatBR = sameBottom && sameRight && sameBR;
         const flatBL = sameBottom && sameLeft && sameBL;
 
-        cell.style.borderRadius =
+        const radius =
           (flatTL ? 0 : CELL_RADIUS) + "px " +
           (flatTR ? 0 : CELL_RADIUS) + "px " +
           (flatBR ? 0 : CELL_RADIUS) + "px " +
           (flatBL ? 0 : CELL_RADIUS) + "px";
+        cell.style.borderRadius = radius;
 
-        // Captured territory gets a white boundary — only on sides that
-        // actually border something outside the territory.
-        cell.style.borderTop = (isFilled && !sameTop) ? "2px solid #ffffff" : "none";
-        cell.style.borderRight = (isFilled && !sameRight) ? "2px solid #ffffff" : "none";
-        cell.style.borderBottom = (isFilled && !sameBottom) ? "2px solid #ffffff" : "none";
-        cell.style.borderLeft = (isFilled && !sameLeft) ? "2px solid #ffffff" : "none";
+        // No per-cell white border any more — the captured region's white
+        // line is drawn as one continuous outline around the whole region
+        // by #territoryLayer's filter (see CSS), which is what makes it
+        // wrap the region completely instead of breaking at every gap.
+        cell.style.borderWidth = "0";
 
-        const cellLeftPx = x * (size + BOARD_GAP);
-        const cellTopPx = y * (size + BOARD_GAP);
+        // Absolute coordinates are relative to #board's PADDING box, so the
+        // board's own padding has to be added — cell (0,0) starts at
+        // BOARD_PADDING, not 0. Without this every bridge landed one
+        // padding-width up and to the left, i.e. inside the cell instead of
+        // in the gap, which is why merged blocks never actually looked
+        // joined.
+        const cellLeftPx = BOARD_PADDING + x * (size + BOARD_GAP);
+        const cellTopPx = BOARD_PADDING + y * (size + BOARD_GAP);
+
+        if (isFilled) {
+          addTerritoryCell(cellLeftPx, cellTopPx, size, radius, color);
+        }
+        const bridgeParent = isFilled ? territoryLayer : boardEl;
 
         // Bridges must stop exactly where the cell's own rounded corner
         // starts curving (CELL_RADIUS from that corner) — a bridge that
@@ -653,13 +737,13 @@ Date: 2026-08-11
           const topInset = flatTR ? 0 : CELL_RADIUS;
           const bottomInset = flatBR ? 0 : CELL_RADIUS;
           const h = Math.max(0, size - topInset - bottomInset);
-          addBridge(cellLeftPx + size, cellTopPx + topInset, BOARD_GAP, h, color);
+          addBridge(bridgeParent, cellLeftPx + size, cellTopPx + topInset, BOARD_GAP, h, color, isFrozen);
         }
         if (sameBottom) {
           const leftInset = flatBL ? 0 : CELL_RADIUS;
           const rightInset = flatBR ? 0 : CELL_RADIUS;
           const w = Math.max(0, size - leftInset - rightInset);
-          addBridge(cellLeftPx + leftInset, cellTopPx + size, w, BOARD_GAP, color);
+          addBridge(bridgeParent, cellLeftPx + leftInset, cellTopPx + size, w, BOARD_GAP, color, isFrozen);
         }
       }
     }
@@ -850,6 +934,21 @@ Date: 2026-08-11
     pack.splice(packIndex + 1, 0, cfg);
     loadPackLevel(packIndex + 1);
   }
+
+  // The editor lives at a different URL depending on how this page is being
+  // served, so the link has to be resolved at runtime:
+  //   local file / any *.html URL       → "editor.html"
+  //   Vercel pretty route "/flood"      → "/flood/editor" (see vercel.json)
+  //   direct clean URL ".../prototype"  → ".../editor"
+  // A plain href="editor.html" only works in the first case — on the
+  // deployed site cleanUrls turns it into "/editor", which matches no route
+  // and 404s.
+  document.getElementById("editorLink").href = (function () {
+    const p = location.pathname;
+    if (p.endsWith(".html")) return "editor.html";
+    if (p.endsWith("/prototype")) return p.slice(0, -"/prototype".length) + "/editor";
+    return p.replace(/\/+$/, "") + "/editor";
+  })();
 
   retryBtn.addEventListener("click", resetCurrentBoard);
   nextBtn.addEventListener("click", () => {

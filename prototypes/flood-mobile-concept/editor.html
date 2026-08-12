@@ -251,7 +251,7 @@ Date: 2026-08-11
     <h1>Flood Mobile — Level Editor</h1>
     <p class="subtitle">Công cụ riêng để dựng level bằng tay — không nằm trên giao diện gameplay.</p>
   </div>
-  <a class="back" href="prototype.html" target="_blank" rel="noopener">→ Mở Gameplay để test</a>
+  <a class="back" id="gameplayLink" href="prototype.html">→ Mở Gameplay để test</a>
 </header>
 
 <div class="layout">
@@ -585,6 +585,21 @@ Date: 2026-08-11
     });
     if (m !== "draw") activePieceId = null; // switching away always seals the in-progress piece
   }
+
+  // Mirror of prototype.html's editor link — resolve the gameplay URL at
+  // runtime since cleanUrls on the deployed site makes a plain
+  // href="prototype.html" 404. "/flood/editor" pairs with "/flood", while a
+  // direct clean URL ".../editor" pairs with ".../prototype".
+  document.getElementById("gameplayLink").href = (function () {
+    const p = location.pathname;
+    if (p.endsWith(".html")) return "prototype.html";
+    if (p.endsWith("/editor")) {
+      const base = p.slice(0, -"/editor".length);
+      const segments = base.split("/").filter(Boolean);
+      return segments.length <= 1 ? (base || "/") : base + "/prototype";
+    }
+    return "prototype.html";
+  })();
 
   modeGroup.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-mode]");

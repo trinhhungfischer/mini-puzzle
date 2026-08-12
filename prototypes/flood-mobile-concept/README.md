@@ -109,9 +109,22 @@ inspection. Iterating on mechanics per user feedback:
   gap between same-group neighbors, and each cell's corner radii are
   computed individually — flattened wherever that corner is strictly
   interior to the group (both orthogonal neighbors + the diagonal neighbor
-  are same-group), left rounded everywhere else. Captured territory's white
-  boundary is now drawn per-side (only where that side actually borders
-  something outside the territory) instead of a uniform ring per cell.
+  are same-group), left rounded everywhere else.
+- ✅ **Fixed the bug that made merging never actually work**: absolutely
+  positioned children of `#board` are placed relative to its *padding box*,
+  so bridge coordinates had to include `BOARD_PADDING`. Without it every
+  bridge landed 6px up-and-left — inside the cell (invisible, same color)
+  rather than in the gap, leaving the real gaps dark. This is why several
+  rounds of "merge" work still looked like separate tiles with rough
+  joints. Confirmed by measurement: cell 0 spans 6→45px, the gap is
+  45→48px, and bridges were being drawn at 39→42px.
+- ✅ Captured region is outlined by a single continuous white line that
+  wraps its entire true perimeter (including around bridges and into
+  concave notches), replacing the per-cell CSS border that necessarily
+  broke at every grid gap. Implemented by redrawing the region as one
+  composite shape on `#territoryLayer` and applying four chained white
+  `drop-shadow()` filters (±3px on each axis), which dilates the composite
+  shape's alpha into an even outline that follows the rounded corners.
 
 Verified via DOM/computed-style + simulated-click checks, and this round also
 with real screenshots: cells render as exact integer-px squares, disabled
