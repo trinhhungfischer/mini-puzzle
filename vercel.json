@@ -1,8 +1,8 @@
 {
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/flood", "destination": "/prototypes/flood-mobile-concept/prototype.html" },
-    { "source": "/flood/editor", "destination": "/prototypes/flood-mobile-concept/editor.html" },
-    { "source": "/nesting-blocks", "destination": "/prototypes/nesting-blocks-concept/prototype.html" }
+    { "source": "/flood", "destination": "/prototypes/flood-mobile-concept/prototype" },
+    { "source": "/flood/editor", "destination": "/prototypes/flood-mobile-concept/editor" },
+    { "source": "/nesting-blocks", "destination": "/prototypes/nesting-blocks-concept/prototype" }
   ]
 }
