@@ -1,0 +1,36 @@
+{
+  "name": "Tutorial 01 (2x2, 3 mau)",
+  "gridWidth": 2,
+  "gridHeight": 2,
+  "maxMoves": 3,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff",
+    "#35c98f",
+    "#c084fc"
+  ],
+  "pieceMap": [
+    0,
+    1,
+    2,
+    0
+  ],
+  "pieceColors": [
+    2,
+    3,
+    1
+  ],
+  "pieceMechanics": [
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    }
+  ]
+}

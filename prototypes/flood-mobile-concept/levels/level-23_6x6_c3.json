@@ -1,0 +1,14 @@
+{
+  "name": "Level 23 (6x6, 3 mau)",
+  "gridWidth": 6,
+  "gridHeight": 6,
+  "maxMoves": 15,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff"
+  ],
+  "pieceMap": [0,0,0,1,1,1,0,2,3,1,4,4,5,2,6,6,7,4,5,2,6,8,7,9,5,10,10,8,7,9,11,10,10,8,12,9],
+  "pieceColors": [2,1,1,0,2,0,2,0,1,1,2,1,2]
+}

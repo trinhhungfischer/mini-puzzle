@@ -10,7 +10,7 @@ Ghi chú sống (living doc) để thêm/theo dõi các cơ chế mới cho prot
 |---|---|
 | `prototype.html` | Gameplay thuần — chơi, không có công cụ dựng level |
 | `editor.html` | Level Editor riêng biệt — dựng kích thước map, vẽ khối (kèm cơ chế), đặt điểm khởi đầu, xuất/nạp JSON |
-| `levels/` | 50 level dựng sẵn (3x3 → 8x8, số màu tăng dần) — xem mục riêng bên dưới |
+| `levels/` | 44 level dựng sẵn (7 tutorial tay + 37 random, 4x4 → 8x8, số màu tăng dần) — **gameplay tải trực tiếp từ đây lúc mở trang**, xem mục riêng bên dưới |
 | `docs/mechanics.md` | File này |
 
 ## Cơ chế hiện có (đã implement)
@@ -30,8 +30,10 @@ Ghi chú sống (living doc) để thêm/theo dõi các cơ chế mới cho prot
 | Board luôn vuông từng ô | `layoutBoard()` đo chiều rộng khung chứa thực tế, trừ đi tổng khoảng `gap`, rồi tính `cellSize` nguyên (px) áp cho cả cột lẫn hàng — loại bỏ lỗi ô bị kéo dãn không đều theo chiều ngang/dọc, kể cả khi có gap | `prototype.html`, `editor.html` — `layoutBoard()` |
 | Khoá thật màu không mở rộng lãnh thổ | Màu nào không có mảnh chưa-chiếm nào liền kề vùng đã chiếm sẽ bị làm tối **và vô hiệu hoá thật sự** (`disabled`, không bấm được, không tốn lượt) — trước đó chỉ làm tối nhưng vẫn bấm được và vẫn tốn lượt, gây sai luật | `prototype.html` — `frontierColors()`, `renderPalette()` (`btn.disabled`), `onPickColor()` (guard chặn cả khi bị ép gọi) |
 | Load level JSON (chơi) | Tải file JSON để chơi level dựng sẵn (từ Editor hoặc tự viết tay) — chèn ngay sau vị trí hiện tại trong gói level đang chơi, Next/Back vẫn hoạt động bình thường sau đó | `prototype.html` — `loadCustomLevel()`, nút "Tải level JSON khác…" |
-| Gói level dựng sẵn + Next/Back | Không còn nút "Ngẫu nhiên" trong gameplay. Khi mở trang, tự tạo sẵn 1 gói 5 level ngẫu nhiên (`STARTER_PACK_SIZE`); "Next"/"Back" duyệt qua gói, khoá ở 2 đầu; "Chơi lại" reset đúng level đang đứng | `prototype.html` — `buildStarterPack()`, `loadPackLevel()`, `pack`/`packIndex` |
+| **Gói level tải từ `levels/`** + Next/Back | Không còn nút "Ngẫu nhiên" trong gameplay. Lúc mở trang, `fetch()` `levels/index.json` rồi tải song song (`Promise.all`) từng file trong đó (qua `validateConfig()` — cùng bộ kiểm tra "Tải level JSON khác…" dùng) → gói 44 level thật (7 tutorial + 37 random), không còn sinh ngẫu nhiên lúc chạy nữa. "Next"/"Back" duyệt qua gói, khoá ở 2 đầu; "Chơi lại" reset đúng level đang đứng. Nếu `fetch()` thất bại (ví dụ mở file `.html` trực tiếp mà trình duyệt chặn fetch giữa các file cục bộ — tuỳ trình duyệt, không phải lúc nào cũng bị chặn) thì tự lùi về gói 5 level ngẫu nhiên như cũ (`buildRandomStarterPack()`), có log cảnh báo ở console chứ không báo lỗi cho người chơi | `prototype.html` — `buildStarterPack()`, `buildCuratedStarterPack()`, `buildRandomStarterPack()`, `levelsBaseUrl()`, `loadPackLevel()`, `pack`/`packIndex` |
 | **Level Editor riêng** | Trang `editor.html` độc lập, không nằm trên UI gameplay: đặt kích thước W×H, vẽ từng khối (chọn màu, chạm ô liền kề để gộp vào khối), xoá ô khỏi khối, đặt điểm khởi đầu, **nút "Ngẫu nhiên"** để random hoá nhanh rồi chỉnh tay tiếp, xuất/nạp JSON. Ô chưa vẽ sẽ tự động lấp bằng khối 1x1 khi xuất | `editor.html` — `randomizeGrid()`, `#randomBtn` |
+| Ngẫu nhiên: 2 khối liền kề không trùng màu | `randomizeGrid()` giờ dựng đồ thị kề giữa các mảnh (`buildAdjacencyFor()`) rồi tô màu kiểu greedy graph-coloring: mỗi mảnh chọn ngẫu nhiên trong các màu mà **không mảnh liền kề nào** đang dùng. Trước đây mỗi mảnh random màu độc lập nên hay bị 2 mảnh cạnh nhau trùng màu, trông như dính thành 1 mảnh lớn (gây nhầm và làm sai độ khó thật) | `editor.html` — `randomizeGrid()`, `buildAdjacencyFor()` |
+| **Số lượt tối thiểu để phá đảo** | Hiển thị trong khu Import/Export, tự tính lại mỗi khi board đổi. Dùng BFS đúng nghĩa trên đồ thị trạng thái "tập mảnh đã chiếm" (không phải heuristic đoán) — vì BFS duyệt theo thứ tự số lượt tăng dần, trạng thái đầu tiên chiếm hết bàn chính là đáp án tối thiểu thật. Có giới hạn an toàn (≤80 mảnh, ≤60.000 trạng thái, ≤150ms) để không treo trình duyệt với bàn quá lớn — vượt giới hạn thì hiện "≥ N (ước tính)" thay vì số chính xác | `editor.html` — `solveMinMoves()`, `regionsFlood()`, `getEffectivePieceState()` |
 | **Cơ chế khối: Ẩn màu (`hidden`)** | Khối giấu màu thật, hiện nền **xám** (`--hidden-bg: #8b919b` — trước là `#3a4252` xanh-đen, quá tối nên trông như lỗ trống thay vì một khối) + dấu "?" ở tâm khối, cho tới khi lãnh thổ đã chiếm chạm tới (liền kề) một trong các ô của khối — lúc đó lộ màu thật ngay (chưa bị chiếm, chỉ là hết ẩn). Vì `filled` chỉ tăng chứ không giảm trong 1 lượt chơi, trạng thái "đã lộ" được tính lại mỗi lần render thay vì lưu cờ riêng | `prototype.html` — `computeConcealedHiddenPieces()`, dùng trong `renderBoard()` |
 | **Cơ chế khối: Băng (`ice`)** | Khối "đóng băng" `turns` lượt (đặt khi vẽ trong Editor). Trong lúc còn đóng băng: vẫn hiện đúng màu thật + lớp phủ băng + số lượt còn lại ở tâm khối, nhưng **không thể bị lãnh thổ đè lên dù trùng màu** (bfs bỏ qua khối này), và màu của nó cũng không tính vào "màu hữu ích" trong bảng chọn màu. Mỗi lượt đi thật (không phải lượt vô hiệu) trừ 1 vào bộ đếm của MỌI khối băng còn đóng băng; băng tan ngay trong lượt làm bộ đếm về 0, nên có thể bị chiếm ngay lượt đó nếu màu khớp | `prototype.html` — `isPieceFrozen()`, `bfsRegion()` (bỏ qua ô đóng băng), `frontierColors()` (loại màu của khối đang đóng băng), `onPickColor()` (trừ đếm băng trước khi tính flood) |
 | Vẽ khối kèm cơ chế trong Editor | Dropdown "Cơ chế cho khối tiếp theo" (Bình thường / Ẩn màu / Băng) áp dụng cho khối đang vẽ; chọn Băng hiện thêm ô nhập số lượt tan băng. Đổi cơ chế khi đang vẽ dở sẽ cập nhật ngay khối đó (giống cách đổi màu). Khối có badge nhỏ góc trên-phải ("?" hoặc "❄N") để tác giả nhận biết — Editor luôn hiện màu thật (không giả lập ẩn) vì đây là công cụ thiết kế, không phải trải nghiệm người chơi | `editor.html` — `#mechanicSelect`, `#iceTurnsInput`, `pieceMechanicOf`, `.mechMark` |
@@ -89,30 +91,56 @@ Copy khối dưới đây cho mỗi ý tưởng, điền vào rồi thêm vào p
   sẽ được chèn ngay sau level đang chơi trong gói, Next/Back vẫn dùng được tiếp.
   Đã kiểm tra vòng lặp Editor → Xuất → Gameplay → Tải hoạt động đúng.
 
-## Thư mục `levels/` — 50 level dựng sẵn
+## Thư mục `levels/` — 44 level dựng sẵn (đây là bộ gameplay tải lúc mở trang)
 
-50 file JSON (`level-01_3x3_c2.json` … `level-50_8x8_c5.json`) + `index.json`
-(manifest liệt kê cả 50 level: file, tên, kích thước, số màu, maxMoves, số
-mảnh) + `_generate.pl` (script Perl đã dùng để sinh — chạy lại bằng
-`perl _generate.pl <thư_mục_đích>` nếu cần bộ level mới).
+`level-01_2x2_c3.json` … `level-44_8x8_c5.json` (44 file) + `index.json`
+(manifest liệt kê cả 44 level theo đúng thứ tự chơi: file, tên, kích thước,
+số màu, maxMoves, số mảnh) + `_generate.pl` (script Perl sinh **phần
+random** — chạy lại bằng `perl _generate.pl <thư_mục_đích>` nếu cần bộ
+level random mới; xem ghi chú quan trọng bên dưới về phần tutorial).
 
-- **Kích thước**: 6 cỡ lưới vuông 3x3 → 8x8, phân bố 9/9/8/8/8/8 level mỗi cỡ
-  (tổng 50).
-- **Số màu**: tăng dần theo chỉ số level toàn cục (không theo từng cỡ riêng)
-  — level 1-13 dùng 2 màu, 14-26 dùng 3 màu, 27-39 dùng 4 màu, 40-50 dùng 5
-  màu. Vì cỡ lưới cũng tăng dần theo thứ tự file, độ khó nhìn chung tăng dần
-  từ level 01 tới 50, dù không tuyệt đối tuyến tính (ranh giới màu và ranh
-  giới cỡ lưới không trùng khớp hoàn toàn — có chủ đích, tạo độ trộn tự nhiên).
+> **Lịch sử**: bộ ban đầu có 50 level random (đánh số 8-57, gồm cả cỡ 3x3 và
+> 9 level cỡ 4x4). Theo yêu cầu, đã bỏ hẳn cỡ 3x3 và cắt 4x4 từ 9 xuống 5
+> level (đúng bằng việc xoá "level 8-20" trong cách đánh số cũ), còn lại 37
+> level random (8-44). Nhịp tăng màu được đổi từ hằng số cứng "13 level/bậc"
+> sang tính động theo tổng số level thực tế, để vẫn chạm 5 màu ở level cuối
+> dù tổng số level đổi.
+
+### Level 1-7: Tutorial (dựng tay, không tự sinh lại)
+
+7 level đầu (`level-01_2x2_c3.json` … `level-07_5x5_c5.json`) là level dựng
+tay qua Editor (xuất từ `editor.html`), KHÔNG phải sản phẩm của
+`_generate.pl` — kích thước tăng dần nhẹ (2x2 → 5x5), Tutorial 04 và 05 giới
+thiệu cơ chế Ẩn màu. `_generate.pl` biết về 7 file này qua bảng
+`@TUTORIALS` (metadata cứng ở đầu script, dùng để ghi đúng mục trong
+`index.json`) nhưng **không bao giờ ghi đè nội dung của chúng** — script chỉ
+sinh level 8 trở đi. Muốn sửa nội dung tutorial: sửa trực tiếp file JSON
+(hoặc mở lại trong Editor, chỉnh, xuất, ghi đè đúng tên file), rồi cập nhật
+`@TUTORIALS` trong `_generate.pl` nếu tên/kích thước/maxMoves/số mảnh đổi
+(để `index.json` vẫn khớp) trước khi chạy lại script.
+
+### Level 8-44: sinh ngẫu nhiên
+
+- **Kích thước**: 5 cỡ lưới vuông 4x4 → 8x8, phân bố 5/8/8/8/8 level mỗi cỡ
+  (tổng 37, đánh số 8-44). Cỡ 3x3 đã bị bỏ hẳn.
+- **Số màu**: tăng dần theo chỉ số level toàn cục trong nhóm random (không
+  theo từng cỡ riêng), chia làm 4 bậc đều nhau tính động
+  (`$TIER_SIZE = ceil(tổng_level_random / 4)` = 10 với 37 level) — 10 level
+  đầu dùng 2 màu, 10 tiếp 3 màu, 10 tiếp 4 màu, 7 cuối 5 màu.
 - **maxMoves**: tính theo công thức `round(W*H / colorCount) + colorCount`
   (khớp đúng baseline gameplay: 8x8/5 màu → 18 lượt).
-- **Cơ chế khối**: toàn bộ 50 level chỉ dùng khối "Bình thường" — không có
-  ẩn màu / băng (những cơ chế đó là công cụ thiết kế tay qua Editor, không
-  đưa vào bộ random này).
-- Các level này **chưa được nối vào gói Next/Back của gameplay** — hiện
-  `prototype.html` vẫn tự sinh gói 5 level ngẫu nhiên lúc mở trang. Muốn
-  chơi thử 1 level trong `levels/`, dùng nút "Tải level JSON khác…" và chọn
-  file tương ứng. Nếu muốn thay `buildStarterPack()` để đọc trực tiếp từ
-  thư mục này, đó là việc cần làm riêng (yêu cầu thêm, chưa làm).
+- **Không 2 mảnh cạnh nhau trùng màu**: `assign_colors()` trong
+  `_generate.pl` dùng greedy graph-coloring giống `randomizeGrid()` của
+  Editor — mỗi mảnh chọn màu không trùng mảnh liền kề.
+- **Cơ chế khối**: toàn bộ 37 level random chỉ dùng khối "Bình thường".
+
+### Gameplay tải bộ này thế nào
+
+`prototype.html` lúc mở trang gọi `fetch('levels/index.json')` rồi tải song
+song cả 44 file, dùng thẳng làm gói Next/Back (xem hàng "Gói level tải từ
+`levels/`" ở bảng cơ chế phía trên). Nếu mở file `.html` trực tiếp và trình
+duyệt chặn fetch giữa các file cục bộ, tự lùi về 5 level ngẫu nhiên tạo lúc
+chạy (bộ cũ) — không phải lúc nào cũng bị chặn, tuỳ trình duyệt/thiết lập.
 
 ## Backlog ý tưởng
 
@@ -120,8 +148,8 @@ _(chưa có mục nào — thêm ý tưởng mới ở đây)_
 
 ## Ý tưởng đã cân nhắc nhưng cắt khỏi prototype ban đầu
 
-- Nhiều màn chơi / độ khó tăng dần — một phần đã có qua `levels/` (50 level
-  độ khó tăng dần) nhưng chưa nối vào luồng chơi chính
+- Nhiều màn chơi / độ khó tăng dần — đã có qua `levels/` (44 level, 7
+  tutorial + 37 độ khó tăng dần), đã nối vào luồng chơi chính
 - Lưu tiến trình (localStorage)
 - Âm thanh / hiệu ứng
 - Bảng xếp hạng số lượt tối thiểu

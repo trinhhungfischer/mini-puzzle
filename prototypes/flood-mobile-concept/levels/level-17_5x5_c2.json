@@ -1,0 +1,13 @@
+{
+  "name": "Level 17 (5x5, 2 mau)",
+  "gridWidth": 5,
+  "gridHeight": 5,
+  "maxMoves": 15,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d"
+  ],
+  "pieceMap": [0,0,1,2,3,4,5,6,2,3,4,5,6,6,7,8,9,9,7,7,8,8,8,7,10],
+  "pieceColors": [1,0,1,0,0,0,0,1,0,1,0]
+}

@@ -289,6 +289,7 @@ Date: 2026-08-11
   #overlay {
     position: fixed;
     inset: 0;
+    z-index: 10; /* above .cell's z-index:1 (see .cell comment) so it isn't painted under the board */
     background: rgba(10,12,16,0.82);
     display: none;
     align-items: center;
@@ -309,15 +310,24 @@ Date: 2026-08-11
   #overlayTitle.win { color: var(--win); }
   #overlayTitle.lose { color: var(--lose); }
 
-  #overlayBtn {
+  #overlayActions {
+    display: flex;
+    gap: 10px;
+  }
+
+  #overlayBtn,
+  #overlayNextBtn {
     padding: 12px 28px;
     border: 0;
     border-radius: 12px;
-    background: var(--accent);
     color: #fff;
     font-size: 1rem;
     font-weight: 700;
   }
+
+  #overlayBtn { background: var(--accent); }
+  #overlayNextBtn { background: var(--win); }
+  #overlayNextBtn.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -353,7 +363,10 @@ Date: 2026-08-11
   <div id="overlay">
     <div id="overlayTitle"></div>
     <div id="overlayDetail" class="subtitle"></div>
-    <button id="overlayBtn">Chơi lại</button>
+    <div id="overlayActions">
+      <button id="overlayBtn">Chơi lại</button>
+      <button id="overlayNextBtn" class="hidden">Level tiếp theo →</button>
+    </div>
   </div>
 
 <script>
@@ -393,6 +406,7 @@ Date: 2026-08-11
   const overlayTitle = document.getElementById("overlayTitle");
   const overlayDetail = document.getElementById("overlayDetail");
   const overlayBtn = document.getElementById("overlayBtn");
+  const overlayNextBtn = document.getElementById("overlayNextBtn");
 
   // ---- Level pack: an ordered list of levels Next/Back page through.
   // Built once at startup (random). Loading a custom JSON via "Tải level
@@ -487,7 +501,10 @@ Date: 2026-08-11
     return { pieceId, colors, mechanics };
   }
 
-  function buildStarterPack(n) {
+  // Fallback pack used only when the curated levels/ set can't be loaded
+  // (see buildStarterPack() below) — e.g. opening prototype.html directly
+  // as a file:// page, where browsers block fetch() to sibling files.
+  function buildRandomStarterPack(n) {
     const levels = [];
     for (let i = 0; i < n; i++) {
       const { pieceId, colors, mechanics } = generateRandomPieces(DEFAULT_W, DEFAULT_H, DEFAULT_COLORS.length);
@@ -504,6 +521,50 @@ Date: 2026-08-11
       });
     }
     return levels;
+  }
+
+  // Relative "levels/…" resolves correctly from a local *.html file and
+  // from a clean URL like ".../prototype" (its "directory" really is this
+  // folder), but not from a Vercel pretty route like "/flood" — the
+  // rewrite is server-side and invisible to the browser's URL bar, so a
+  // relative fetch from "/flood" resolves against "/", not this folder.
+  // Same class of bug as the Editor link 404 (see #editorLink below).
+  function levelsBaseUrl() {
+    const p = location.pathname;
+    if (p.endsWith(".html") || p.endsWith("/prototype")) return "levels/";
+    return "/prototypes/flood-mobile-concept/levels/";
+  }
+
+  // Loads the real, hand-picked level set (7 tutorials + 50 generated) from
+  // levels/index.json via fetch(). This is what actually ships — the random
+  // generator above is only a fallback for when fetch can't reach the level
+  // files at all (typically: opened as a local file:// page, where browsers
+  // block fetch() between sibling files).
+  async function buildCuratedStarterPack() {
+    const base = levelsBaseUrl();
+    const res = await fetch(base + "index.json");
+    if (!res.ok) throw new Error("index.json fetch failed: " + res.status);
+    const manifest = await res.json();
+    if (!Array.isArray(manifest) || manifest.length === 0) throw new Error("empty/invalid manifest");
+    return Promise.all(manifest.map(async (entry) => {
+      const r = await fetch(base + entry.file);
+      if (!r.ok) throw new Error("level fetch failed: " + entry.file);
+      const cfg = await r.json();
+      return validateConfig(cfg); // same validator "Tải level JSON khác…" uses — same guarantees
+    }));
+  }
+
+  async function buildStarterPack() {
+    try {
+      return await buildCuratedStarterPack();
+    } catch (err) {
+      console.warn(
+        "Không tải được bộ level từ levels/ (bình thường khi mở file này trực tiếp — " +
+        "trình duyệt chặn fetch() giữa các file cục bộ). Dùng bộ ngẫu nhiên thay thế.",
+        err
+      );
+      return buildRandomStarterPack(STARTER_PACK_SIZE);
+    }
   }
 
   // Rebuilds the piece -> cells lookup, used for hidden-reveal checks and
@@ -767,8 +828,17 @@ Date: 2026-08-11
 
   function renderPalette() {
     const frontier = frontierColors();
+    // Only show colors this level actually paints somewhere — a level with
+    // 2 colors used to still show all 5 palette slots, with the unused
+    // ones sitting there permanently dimmed for no reason. `grid` mutates
+    // as you play but its values are always drawn from the level's
+    // original per-piece colors, so that's the source of truth for "which
+    // colors exist here" regardless of how far the game has progressed.
+    const usedColors = new Set(originalPieceColors);
     paletteEl.innerHTML = "";
+    paletteEl.style.gridTemplateColumns = `repeat(${usedColors.size}, 1fr)`;
     COLORS.forEach((c, i) => {
+      if (!usedColors.has(i)) return;
       const btn = document.createElement("button");
       const isCurrent = i === currentColor;
       const isUseless = !isCurrent && !frontier.has(i);
@@ -798,6 +868,13 @@ Date: 2026-08-11
     overlayDetail.textContent = won
       ? `Bạn phủ kín lưới trong ${MAX_MOVES - movesLeft} lượt.`
       : "Lưới chưa phủ kín một màu. Thử lại nhé.";
+    // Winning is the only path that offers to jump straight to the next
+    // level — losing should only offer a retry. The overlay is full-screen
+    // (position:fixed) so Next/Back underneath are unreachable while it's
+    // up; without this button, winning used to strand the player with no
+    // way to advance except retrying the level they just won.
+    const hasNext = packIndex < pack.length - 1;
+    overlayNextBtn.classList.toggle("hidden", !(won && hasNext));
   }
 
   function hideOverlay() {
@@ -958,6 +1035,9 @@ Date: 2026-08-11
     if (packIndex > 0) loadPackLevel(packIndex - 1);
   });
   overlayBtn.addEventListener("click", resetCurrentBoard);
+  overlayNextBtn.addEventListener("click", () => {
+    if (packIndex < pack.length - 1) loadPackLevel(packIndex + 1);
+  });
 
   loadLink.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
@@ -988,8 +1068,11 @@ Date: 2026-08-11
     });
   });
 
-  pack = buildStarterPack(STARTER_PACK_SIZE);
-  loadPackLevel(0);
+  levelLabelEl.textContent = "Đang tải bộ level…";
+  (async () => {
+    pack = await buildStarterPack();
+    loadPackLevel(0);
+  })();
 })();
 </script>
 

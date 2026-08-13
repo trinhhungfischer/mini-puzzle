@@ -404,6 +404,23 @@ Date: 2026-08-11
     return list;
   }
 
+  // Piece-level adjacency: adj[p] is the set of piece ids that share a cell
+  // edge with piece p. Used both for the "no two touching pieces share a
+  // colour" random fill and for the minimum-moves solver below.
+  function buildAdjacencyFor(pieceIdArr, count) {
+    const adj = new Array(count);
+    for (let p = 0; p < count; p++) adj[p] = new Set();
+    for (let i = 0; i < pieceIdArr.length; i++) {
+      for (const n of neighborsOf(i)) {
+        if (pieceIdArr[n] !== pieceIdArr[i]) {
+          adj[pieceIdArr[i]].add(pieceIdArr[n]);
+          adj[pieceIdArr[n]].add(pieceIdArr[i]);
+        }
+      }
+    }
+    return adj;
+  }
+
   function newGrid(w, h) {
     W = w; H = h;
     cellPieceId = new Array(w * h).fill(-1);
@@ -444,10 +461,32 @@ Date: 2026-08-11
       }
     }
 
+    // Colour pieces so no two adjacent pieces share a colour (greedy graph
+    // colouring): for each piece, pick randomly among whichever palette
+    // colours none of its already-coloured neighbours are using. Random
+    // generation used to just roll a colour per piece independently, which
+    // regularly left same-colour pieces touching — those look like one
+    // bigger (accidental) piece instead of two, which is confusing both to
+    // read and to solve.
+    const adj = buildAdjacencyFor(pieceId, nextId);
     const colorOf = {};
     const mechanicOf = {};
     for (let p = 0; p < nextId; p++) {
-      colorOf[p] = Math.floor(Math.random() * COLORS.length);
+      const used = new Set();
+      for (const nb of adj[p]) {
+        if (colorOf[nb] !== undefined) used.add(colorOf[nb]);
+      }
+      const available = [];
+      for (let c = 0; c < COLORS.length; c++) {
+        if (!used.has(c)) available.push(c);
+      }
+      // If every colour is already used by a neighbour (only possible when
+      // a piece has more distinct-colour neighbours than the palette has
+      // colours), fall back to a fully random pick — a rare, unavoidable
+      // clash rather than a crash.
+      colorOf[p] = available.length > 0
+        ? available[Math.floor(Math.random() * available.length)]
+        : Math.floor(Math.random() * COLORS.length);
       mechanicOf[p] = { type: "normal" }; // random gen only ever produces plain pieces
     }
 
@@ -564,6 +603,127 @@ Date: 2026-08-11
     });
   }
 
+  // Same gap-filling logic as buildExportConfig(), but returns the raw
+  // (un-remapped) piece map/colours — this is what actually gets played,
+  // so it's what the solver below should measure, not the in-progress
+  // painted state (which may still have -1 gaps).
+  function getEffectivePieceState() {
+    const total = W * H;
+    const workingPieceId = cellPieceId.slice();
+    const workingColorOf = Object.assign({}, pieceColorOf);
+    let synthNext = nextPieceId;
+    for (let i = 0; i < total; i++) {
+      if (workingPieceId[i] === -1) {
+        const pid = synthNext++;
+        workingPieceId[i] = pid;
+        workingColorOf[pid] = 0;
+      }
+    }
+    return { pieceId: workingPieceId, colorOf: workingColorOf, count: synthNext };
+  }
+
+  const SOLVE_MAX_PIECES = 80;   // above this, exact BFS search is skipped (see solveMinMoves)
+  const SOLVE_STATE_CAP = 60000; // max distinct region-states to explore before giving up
+  const SOLVE_TIME_BUDGET_MS = 150;
+
+  function regionsFlood(adj, colorOf, region, color) {
+    const next = new Set(region);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const p of next) {
+        for (const nb of adj[p]) {
+          if (!next.has(nb) && colorOf[nb] === color) {
+            next.add(nb);
+            changed = true;
+          }
+        }
+      }
+    }
+    return next;
+  }
+
+  function frontierColorsOfRegion(adj, colorOf, region) {
+    const set = new Set();
+    for (const p of region) {
+      for (const nb of adj[p]) {
+        if (!region.has(nb)) set.add(colorOf[nb]);
+      }
+    }
+    return set;
+  }
+
+  function regionKey(region) {
+    return [...region].sort((a, b) => a - b).join(",");
+  }
+
+  // Breadth-first search over "which pieces are captured" states — since
+  // BFS explores in move-count order, the first state that captures every
+  // piece is reached in the minimum number of moves. Capped by piece count,
+  // explored-state count, and a time budget so a pathological board (huge,
+  // many colours) degrades to an estimate instead of hanging the editor.
+  function solveMinMoves(pieceIdArr, colorOf, count, startPiece) {
+    if (count <= 1) return { moves: 0, exact: true };
+    if (count > SOLVE_MAX_PIECES) {
+      const adj = buildAdjacencyFor(pieceIdArr, count);
+      const start = initialRegion(adj, colorOf, startPiece);
+      const bound = frontierColorsOfRegion(adj, colorOf, start).size;
+      return { moves: Math.max(1, bound), exact: false };
+    }
+
+    const adj = buildAdjacencyFor(pieceIdArr, count);
+    const start = initialRegion(adj, colorOf, startPiece);
+    if (start.size === count) return { moves: 0, exact: true };
+
+    const t0 = performance.now();
+    const visited = new Set([regionKey(start)]);
+    let frontier = [start];
+    let moves = 0;
+
+    while (frontier.length) {
+      if (visited.size > SOLVE_STATE_CAP || performance.now() - t0 > SOLVE_TIME_BUDGET_MS) {
+        let bestRemaining = Infinity;
+        for (const region of frontier) {
+          bestRemaining = Math.min(bestRemaining, frontierColorsOfRegion(adj, colorOf, region).size || 1);
+        }
+        return { moves: moves + (isFinite(bestRemaining) ? bestRemaining : 1), exact: false };
+      }
+      moves++;
+      const nextFrontier = [];
+      for (const region of frontier) {
+        for (const c of frontierColorsOfRegion(adj, colorOf, region)) {
+          const nextRegion = regionsFlood(adj, colorOf, region, c);
+          if (nextRegion.size === count) return { moves, exact: true };
+          const key = regionKey(nextRegion);
+          if (!visited.has(key)) {
+            visited.add(key);
+            nextFrontier.push(nextRegion);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+    return { moves, exact: false }; // unreachable in a well-formed board, but never hang
+  }
+
+  function initialRegion(adj, colorOf, startPiece) {
+    const startColor = colorOf[startPiece];
+    const region = new Set([startPiece]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const p of [...region]) {
+        for (const nb of adj[p]) {
+          if (!region.has(nb) && colorOf[nb] === startColor) {
+            region.add(nb);
+            changed = true;
+          }
+        }
+      }
+    }
+    return region;
+  }
+
   function renderStatus() {
     const total = W * H;
     const filledCount = cellPieceId.filter(v => v !== -1).length;
@@ -575,6 +735,16 @@ Date: 2026-08-11
     } else {
       html += `<br><span class="ok">Đã phủ kín lưới.</span>`;
     }
+
+    const eff = getEffectivePieceState();
+    if (eff.count > 0) {
+      const startPiece = eff.pieceId[startIndex];
+      const result = solveMinMoves(eff.pieceId, eff.colorOf, eff.count, startPiece);
+      html += result.exact
+        ? `<br>Số lượt tối thiểu để phá đảo: <b>${result.moves}</b>`
+        : `<br>Số lượt tối thiểu để phá đảo: <b>≥ ${result.moves}</b> <span class="hint">(ước tính — bàn quá lớn để tính chính xác)</span>`;
+    }
+
     statusEl.innerHTML = html;
   }
 

@@ -1,0 +1,59 @@
+{
+  "name": "Tutorial 05 (3x5, 3 mau)",
+  "gridWidth": 3,
+  "gridHeight": 5,
+  "maxMoves": 4,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff",
+    "#35c98f",
+    "#c084fc"
+  ],
+  "pieceMap": [
+    0,
+    1,
+    1,
+    2,
+    1,
+    1,
+    2,
+    2,
+    2,
+    3,
+    3,
+    4,
+    5,
+    4,
+    4
+  ],
+  "pieceColors": [
+    2,
+    0,
+    4,
+    2,
+    0,
+    4
+  ],
+  "pieceMechanics": [
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "hidden"
+    },
+    {
+      "type": "normal"
+    }
+  ]
+}

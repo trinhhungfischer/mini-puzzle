@@ -56,18 +56,33 @@ color and mechanic (see below), erase, set the flood start point, then
   on every real move made anywhere on the board; a piece that hits 0 thaws
   immediately and becomes capturable that same move.
 
-### `levels/` — 50 pre-generated levels
+### `levels/` — 44 pre-built levels (this is what gameplay actually loads)
 
-A Perl script (`levels/_generate.pl`, no Node/Python available in this
-environment) ported the exact same polyomino-tiling algorithm used by the
-game to generate 50 standalone level files: 6 board sizes (3x3 through 8x8,
-9/9/8/8/8/8 levels each) with color count ramping from 2 to 5 across the
-sequence, and `maxMoves` computed from a formula validated against the game's
-own 8x8/5-color default (18 moves). `levels/index.json` is a manifest of all
-50. These are plain "normal"-only levels (no hidden/ice) and are **not**
-wired into the gameplay pack automatically — load one via "Tải level JSON
-khác…" to play it, or ask to have `buildStarterPack()` read from this folder
-if you want them in the default Next/Back rotation.
+`prototype.html` fetches `levels/index.json` on load and pulls in all 44
+levels in parallel as its Next/Back pack — there's no more runtime random
+generation as the primary path.
+
+- **Levels 1-7**: hand-authored tutorials (built and exported from
+  `editor.html`), sizes ramping 2x2 → 5x5; tutorials 4-5 introduce the
+  hidden-color mechanic. `_generate.pl` knows about them via a hardcoded
+  `@TUTORIALS` metadata table (so it can write correct `index.json` entries)
+  but never overwrites their files.
+- **Levels 8-44**: a Perl script (`levels/_generate.pl`, no Node/Python
+  available in this environment) ports the game's own polyomino-tiling
+  algorithm to generate 37 levels: 5 board sizes (4x4 through 8x8 — 3x3 was
+  dropped and 4x4 cut down per user request, removing what were the old
+  "levels 8-20") with color count ramping 2→5 (tier size computed from the
+  actual level count so the ramp always reaches 5 colors by the end, however
+  many levels there are), `maxMoves` from a formula validated against the
+  game's own 8x8/5-color default (18 moves), and greedy graph-coloring so no
+  two touching pieces share a color (mirrors the Editor's `randomizeGrid()`
+  fix — see below).
+
+If `fetch()` can't reach `levels/` (browser-dependent — typically only an
+issue opening the `.html` file directly with a browser that blocks
+same-origin `file://` fetches), gameplay silently falls back to the old
+5-level runtime-random pack (`buildRandomStarterPack()`) with a console
+warning, rather than breaking.
 
 ## Current Status
 
@@ -91,8 +106,14 @@ inspection. Iterating on mechanics per user feedback:
 - ✅ Gameplay "Ngẫu nhiên" button removed; replaced with a 5-level starter
   pack + Next/Back navigation, matching the requested button layout
   (Chơi lại / Next / Back / Mở Editor)
-- ✅ 50 pre-generated levels in `levels/` (3x3→8x8, ramping color count) —
-  see above
+- ✅ 44 pre-built levels in `levels/` (7 hand-authored tutorials + 37
+  generated, 2x2→8x8, ramping color count) — see above
+- ✅ Removed the old levels 8-20 (all nine 3x3s + the first four 4x4s) per
+  user request — 3x3 dropped from `_generate.pl`'s size list entirely, 4x4
+  cut from 9 to 5; everything renumbered so there are no gaps (37 generated
+  levels total now, landing at 8-44). Tier size for the color ramp is now
+  computed from the actual generated count instead of a fixed "13 levels per
+  tier" divisor, so it still reaches 5 colors by the last level.
 - ✅ Two new block mechanics: hidden-color (`?` until territory-adjacent)
   and ice (frozen N moves, blocks capture and palette usefulness until
   thawed) — authorable in the Editor, engine-level support in gameplay
@@ -125,6 +146,32 @@ inspection. Iterating on mechanics per user feedback:
   composite shape on `#territoryLayer` and applying four chained white
   `drop-shadow()` filters (±3px on each axis), which dilates the composite
   shape's alpha into an even outline that follows the rounded corners.
+- ✅ Start-point cell marked with "★"; hidden-piece "?" and ice countdown
+  glyphs repeat on every cell of the piece (not just one) so the whole
+  block reads at a glance regardless of which part you're looking at.
+- ✅ Ice blocks got a real "sheet of ice" texture (diagonal crystal streaks,
+  frost gradient, bright top edge) instead of a flat tint overlay, applied
+  to both cells and the bridges between them so a multi-cell frozen block
+  freezes as one visual sheet.
+- ✅ Win overlay now offers "Level tiếp theo →" alongside "Chơi lại" instead
+  of trapping the player behind a full-screen overlay with no way to reach
+  the Next button underneath — fixed a self-inflicted regression in the
+  same round where cells (needed above `#territoryLayer` for the ★ mark)
+  were also painting over the overlay; overlay now has an explicit higher
+  z-index.
+- ✅ Editor's "Ngẫu nhiên" no longer lets two touching pieces share a color
+  (greedy graph-coloring, same fix ported into `levels/_generate.pl`'s
+  random 50), and the Editor now shows a real minimum-moves-to-solve stat
+  (exact via BFS over the "which pieces are captured" state space, capped
+  and falling back to a lower-bound estimate on very large boards).
+- ✅ Gameplay palette only shows colors the current level actually uses
+  (was always showing all 5 slots even for a 2-color level).
+- ✅ Gameplay now loads its Next/Back pack from `levels/` (`fetch()` +
+  `Promise.all`) instead of generating levels at runtime — 7 hand-built
+  tutorial levels (introducing hidden-color partway through) followed by
+  the 37 generated ones, 44 total (see the levels-8-20-removal bullet
+  above). Falls back to the old 5-level random pack if `fetch()` can't
+  reach the files (browser/context dependent).
 
 Verified via DOM/computed-style + simulated-click checks, and this round also
 with real screenshots: cells render as exact integer-px squares, disabled

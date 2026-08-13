@@ -1,5 +1,5 @@
 {
-  "name": "Level 11 (4x4, 2 mau)",
+  "name": "Level 09 (4x4, 2 mau)",
   "gridWidth": 4,
   "gridHeight": 4,
   "maxMoves": 10,
@@ -8,6 +8,6 @@
     "#ff6b6b",
     "#ffd93d"
   ],
-  "pieceMap": [0,0,0,1,0,2,3,4,5,3,3,3,6,6,7,7],
-  "pieceColors": [0,1,1,0,1,1,0,1]
+  "pieceMap": [0,0,0,1,2,3,4,1,5,3,6,1,7,7,6,6],
+  "pieceColors": [0,1,1,0,0,1,0,0]
 }
