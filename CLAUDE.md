@@ -30,6 +30,10 @@ Each agent owns a specific domain, enforcing separation of concerns and quality.
 
 @.claude/docs/coordination-rules.md
 
+## Working Agreement
+
+@.claude/docs/working-agreement.md
+
 ## Collaboration Protocol
 
 **User-driven collaboration, not autonomous execution.**
