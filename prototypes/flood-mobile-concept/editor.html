@@ -324,6 +324,11 @@ Date: 2026-08-11
 
     <section>
       <h2>Import / Export</h2>
+      <div class="field">
+        <label for="exportFilenameInput">Tên file khi xuất</label>
+        <input id="exportFilenameInput" type="text" value="flood-level.json">
+      </div>
+      <div class="hint" id="saveModeHint"></div>
       <div class="btn-row">
         <button id="loadBtn">Tải JSON để sửa</button>
         <button id="exportBtn" class="primary">Xuất JSON</button>
@@ -369,6 +374,8 @@ Date: 2026-08-11
   const mechanicSelect = document.getElementById("mechanicSelect");
   const iceTurnsField = document.getElementById("iceTurnsField");
   const iceTurnsInput = document.getElementById("iceTurnsInput");
+  const exportFilenameInput = document.getElementById("exportFilenameInput");
+  const saveModeHint = document.getElementById("saveModeHint");
 
   const MIN_PIECE_SIZE = 1;
   const MAX_PIECE_SIZE = 4; // matches prototype.html — 1x1 up to tetromino-sized
@@ -429,6 +436,7 @@ Date: 2026-08-11
     nextPieceId = 0;
     activePieceId = null;
     startIndex = 0;
+    exportFilenameInput.value = `level_${w}x${h}.json`;
     buildBoardDom();
     render();
   }
@@ -852,20 +860,61 @@ Date: 2026-08-11
     };
   }
 
-  exportBtn.addEventListener("click", () => {
+  // showSaveFilePicker() opens a real native "Save As" dialog — the user
+  // picks the exact file name AND folder (e.g. straight into
+  // prototypes/flood-mobile-concept/levels/), unlike <a download> which
+  // always drops the file in the browser's fixed Downloads folder under
+  // whatever name we hand it with zero control over the destination.
+  // Support is Chromium-only and can also refuse to run outright on a
+  // file:// page in some setups, so this always has the old <a download>
+  // path as a fallback — same filename, just no folder choice.
+  const supportsSavePicker = typeof window.showSaveFilePicker === "function";
+  saveModeHint.textContent = supportsSavePicker
+    ? "Bấm \"Xuất JSON\" sẽ mở hộp thoại Lưu — chọn đúng thư mục và tên file bạn muốn."
+    : "Trình duyệt này không hỗ trợ chọn thư mục lúc lưu — file sẽ tải về thư mục Downloads mặc định với tên bên dưới.";
+
+  function sanitizeFilename(name) {
+    const trimmed = (name || "").trim();
+    const withExt = /\.json$/i.test(trimmed) ? trimmed : trimmed + ".json";
+    return withExt.replace(/[^a-zA-Z0-9._-]+/g, "_") || "flood-level.json";
+  }
+
+  async function exportLevel() {
     const config = buildExportConfig();
     const json = JSON.stringify(config, null, 2);
     jsonPreview.value = json;
+    const filename = sanitizeFilename(exportFilenameInput.value);
+    exportFilenameInput.value = filename; // reflect the sanitized version back
+
+    if (supportsSavePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: "Flood Mobile level (JSON)", accept: { "application/json": [".json"] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return; // user cancelled the dialog — not an error
+        console.warn("showSaveFilePicker failed, falling back to a normal download.", err);
+        // fall through to the <a download> path below
+      }
+    }
+
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = (config.name.replace(/[^a-z0-9-_]+/gi, "_") || "flood-level") + ".json";
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  });
+  }
+
+  exportBtn.addEventListener("click", exportLevel);
 
   function loadConfigIntoEditor(cfg) {
     const w = Number.isInteger(cfg.gridWidth) ? cfg.gridWidth : cfg.gridSize;
@@ -905,6 +954,10 @@ Date: 2026-08-11
       try {
         const cfg = JSON.parse(String(reader.result));
         loadConfigIntoEditor(cfg);
+        // Re-exporting after edits defaults to overwriting the same file
+        // you just opened, instead of some name derived from the level's
+        // display "name" field.
+        exportFilenameInput.value = file.name;
       } catch (err) {
         alert("Không tải được level: " + err.message);
       }
