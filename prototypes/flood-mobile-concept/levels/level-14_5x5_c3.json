@@ -1,0 +1,14 @@
+{
+  "name": "Level 14 (5x5, 3 mau)",
+  "gridWidth": 5,
+  "gridHeight": 5,
+  "maxMoves": 4,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff"
+  ],
+  "pieceMap": [0,0,0,1,1,0,2,2,3,1,4,2,2,3,5,4,6,6,6,7,8,8,8,8,7],
+  "pieceColors": [1,0,0,2,2,1,1,0,1]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "Level 18 (5x5, 4 mau)",
+  "gridWidth": 5,
+  "gridHeight": 5,
+  "maxMoves": 5,
+  "startIndex": 0,
+  "colors": [
+    "#ff6b6b",
+    "#ffd93d",
+    "#4f8cff",
+    "#35c98f"
+  ],
+  "pieceMap": [0,0,1,2,3,0,4,1,2,5,0,1,1,6,5,7,8,9,6,6,8,8,9,9,6],
+  "pieceColors": [2,1,0,1,3,3,2,0,3,0]
+}

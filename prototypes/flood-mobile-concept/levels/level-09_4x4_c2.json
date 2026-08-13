@@ -1,13 +1,102 @@
 {
-  "name": "Level 09 (4x4, 2 mau)",
-  "gridWidth": 4,
-  "gridHeight": 4,
-  "maxMoves": 10,
+  "name": "Level tuỳ chỉnh",
+  "gridWidth": 5,
+  "gridHeight": 5,
+  "maxMoves": 9,
   "startIndex": 0,
   "colors": [
     "#ff6b6b",
-    "#ffd93d"
+    "#ffd93d",
+    "#4f8cff",
+    "#35c98f",
+    "#c084fc"
   ],
-  "pieceMap": [0,0,0,1,2,3,4,1,5,3,6,1,7,7,6,6],
-  "pieceColors": [0,1,1,0,0,1,0,0]
+  "pieceMap": [
+    0,
+    1,
+    1,
+    2,
+    3,
+    4,
+    5,
+    5,
+    2,
+    6,
+    4,
+    7,
+    8,
+    9,
+    10,
+    4,
+    7,
+    11,
+    10,
+    10,
+    12,
+    7,
+    11,
+    13,
+    10
+  ],
+  "pieceColors": [
+    3,
+    1,
+    3,
+    4,
+    2,
+    0,
+    1,
+    1,
+    4,
+    1,
+    2,
+    0,
+    4,
+    4
+  ],
+  "pieceMechanics": [
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "ice",
+      "turns": 4
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    },
+    {
+      "type": "normal"
+    }
+  ]
 }

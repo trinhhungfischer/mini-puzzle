@@ -2,7 +2,7 @@
   "name": "Level 39 (8x8, 5 mau)",
   "gridWidth": 8,
   "gridHeight": 8,
-  "maxMoves": 18,
+  "maxMoves": 8,
   "startIndex": 0,
   "colors": [
     "#ff6b6b",

@@ -4,25 +4,55 @@
 # come right after the tutorials (random polyomino tiling — ports
 # generateRandomPieces() from prototype.html so they match the engine's own
 # randoms) and index.json (which also lists levels 1-7, the hand-authored
-# tutorials — see @TUTORIALS below). Numbering and count follow @SIZES/
-# @COUNTS below. Re-run after changing them; never touches the tutorial
-# files, and wipes+rewrites every non-tutorial level-*.json in $out_dir each
-# run (delete stale files by hand first if you shrink @COUNTS — this script
-# only overwrites the numbers it's about to (re)write, it doesn't know which
-# old numbers should no longer exist).
+# tutorials — see @TUTORIALS below). Which level number gets which board
+# size and colour count is now an explicit table (@GENERATED_SPEC) rather
+# than a size-list + auto-ramped-colour formula — that made it easy to
+# generate a smooth curve but hard to hand-tune specific ranges (e.g. "levels
+# 11-17 should be 3 colours") without fighting the ramp math. Re-run after
+# editing the table; never touches the tutorial files, and wipes+rewrites
+# every non-tutorial level-*.json in $out_dir each run (delete stale files by
+# hand first if a level's filename changes, e.g. a different colour count —
+# this script only overwrites the exact filenames it's about to (re)write).
 use strict;
 use warnings;
 
-my @DEFAULT_COLORS = ("#ff6b6b", "#ffd93d", "#4f8cff", "#35c98f", "#c084fc");
+# 6 colours now (red/yellow/blue/green/purple + orange) since some levels
+# below ask for a 6-colour tier. Only this script's own palette grew — the
+# game/editor's shared DEFAULT_COLORS were deliberately left at 5 so their
+# unrelated random-generation paths (gameplay's fallback pack, editor's
+# "Ngẫu nhiên") don't change behaviour; every generated level file carries
+# its own full "colors" array anyway, so this is enough on its own.
+my @DEFAULT_COLORS = ("#ff6b6b", "#ffd93d", "#4f8cff", "#35c98f", "#c084fc", "#ffa94d");
 my $MIN_PIECE_SIZE = 1;
 my $MAX_PIECE_SIZE = 4;
 
-my @SIZES  = (4, 5, 6, 7, 8);
-my @COUNTS = (5, 8, 8, 8, 8); # sums to 37 — 3x3 dropped entirely and 4x4 cut
-                              # from 9 to 5 (removed what used to be levels
-                              # 8-20 in the old 1-7-tutorial + 50-generated
-                              # numbering: all nine 3x3s plus the first four
-                              # 4x4s)
+# One row per generated level (numbers continue right after the tutorials,
+# so row 1 here is level 8). `colors` is however many of @DEFAULT_COLORS
+# (in order) that level uses.
+my @GENERATED_SPEC = (
+    # levels 8-10: unchanged (2 colours, 4x4)
+    { w => 4, h => 4, colors => 2 }, { w => 4, h => 4, colors => 2 }, { w => 4, h => 4, colors => 2 },
+    # levels 11-17: 3 colours (11-12 still 4x4, 13-17 5x5 per the existing size table)
+    { w => 4, h => 4, colors => 3 }, { w => 4, h => 4, colors => 3 },
+    { w => 5, h => 5, colors => 3 }, { w => 5, h => 5, colors => 3 }, { w => 5, h => 5, colors => 3 },
+    { w => 5, h => 5, colors => 3 }, { w => 5, h => 5, colors => 3 },
+    # levels 18-27: 4 colours (18-20 5x5, 21-27 6x6)
+    { w => 5, h => 5, colors => 4 }, { w => 5, h => 5, colors => 4 }, { w => 5, h => 5, colors => 4 },
+    { w => 6, h => 6, colors => 4 }, { w => 6, h => 6, colors => 4 }, { w => 6, h => 6, colors => 4 },
+    { w => 6, h => 6, colors => 4 }, { w => 6, h => 6, colors => 4 }, { w => 6, h => 6, colors => 4 },
+    { w => 6, h => 6, colors => 4 },
+    # levels 28-38: 5 colours (28 6x6, 29-36 7x7, 37-38 8x8)
+    { w => 6, h => 6, colors => 5 },
+    { w => 7, h => 7, colors => 5 }, { w => 7, h => 7, colors => 5 }, { w => 7, h => 7, colors => 5 },
+    { w => 7, h => 7, colors => 5 }, { w => 7, h => 7, colors => 5 }, { w => 7, h => 7, colors => 5 },
+    { w => 7, h => 7, colors => 5 }, { w => 7, h => 7, colors => 5 },
+    { w => 8, h => 8, colors => 5 }, { w => 8, h => 8, colors => 5 },
+    # level 39: unchanged (5 colours, 8x8 — not part of any requested range)
+    { w => 8, h => 8, colors => 5 },
+    # levels 40-44: 6 colours (8x8)
+    { w => 8, h => 8, colors => 6 }, { w => 8, h => 8, colors => 6 }, { w => 8, h => 8, colors => 6 },
+    { w => 8, h => 8, colors => 6 }, { w => 8, h => 8, colors => 6 },
+);
 
 sub neighbors_of {
     my ($i, $w, $h) = @_;
@@ -100,6 +130,36 @@ sub assign_colors {
     return @color_of;
 }
 
+# Levels that must stay byte-for-byte identical because they weren't part of
+# the requested regeneration range (their size/colour count is unchanged, but
+# regenerating would still reshuffle their exact piece layout, which nobody
+# asked for). Read back the existing file's own fields instead of writing a
+# new one, so the manifest matches what's actually still on disk.
+my %PRESERVE_LEVELS = map { $_ => 1 } (8, 9, 10, 39);
+
+sub read_existing_manifest_entry {
+    my ($path) = @_;
+    open(my $fh, '<', $path) or die "Cannot read existing $path: $!";
+    local $/;
+    my $text = <$fh>;
+    close($fh);
+    my ($file) = $path =~ m{([^/\\]+)$};
+    my ($name) = $text =~ /"name":\s*"([^"]+)"/;
+    my ($w) = $text =~ /"gridWidth":\s*(\d+)/;
+    my ($h) = $text =~ /"gridHeight":\s*(\d+)/;
+    my ($max_moves) = $text =~ /"maxMoves":\s*(\d+)/;
+    my ($colors_block) = $text =~ /"colors":\s*\[(.*?)\]/s;
+    my @color_count = ($colors_block =~ /#[0-9a-fA-F]{6}/g);
+    my ($piece_map_block) = $text =~ /"pieceMap":\s*\[([^\]]*)\]/;
+    my @ids = split(/,/, $piece_map_block);
+    my $pieces = 0;
+    for my $id (@ids) { $pieces = $id + 1 if $id + 1 > $pieces; }
+    return {
+        file => $file, name => $name, w => $w, h => $h,
+        colors => scalar(@color_count), maxMoves => $max_moves, pieces => $pieces
+    };
+}
+
 sub write_level {
     my ($path, $name, $w, $h, $max_moves, $colors_ref, $piece_map_ref, $piece_colors_ref) = @_;
     my $colors_json = join(",\n    ", map { "\"$_\"" } @$colors_ref);
@@ -141,40 +201,32 @@ my $NUMBER_OFFSET = scalar @TUTORIALS; # auto-generated levels start right after
 
 my $out_dir = $ARGV[0] // '.';
 my @manifest = @TUTORIALS;
-my $global_index = 0; # 0-based, drives the color-count ramp across all auto-generated levels
 
-my $TOTAL_GENERATED = 0;
-$TOTAL_GENERATED += $_ for @COUNTS;
-# Ceil-divide the generated levels into 4 tiers (2/3/4/5 colours) so the ramp
-# always reaches 5 colours by the last level regardless of how many levels
-# there are in total — a fixed divisor (e.g. "13 levels per tier", sized for
-# the original 50) would silently cap out below 5 colours once the set gets
-# smaller than 4x that divisor.
-my $TIER_SIZE = int(($TOTAL_GENERATED + 3) / 4);
+for (my $i = 0; $i < @GENERATED_SPEC; $i++) {
+    my $spec = $GENERATED_SPEC[$i];
+    my ($size_w, $size_h, $color_count) = ($spec->{w}, $spec->{h}, $spec->{colors});
+    my $level_num = $i + 1 + $NUMBER_OFFSET; # 1-based for filenames/names, after the tutorials
 
-for (my $s = 0; $s < @SIZES; $s++) {
-    my $size = $SIZES[$s];
-    my $count = $COUNTS[$s];
-    for (my $k = 0; $k < $count; $k++) {
-        my $level_num = $global_index + 1 + $NUMBER_OFFSET; # 1-based for filenames/names, after the tutorials
-        my $color_count = 2 + int($global_index / $TIER_SIZE);
-        $color_count = 5 if $color_count > 5;
-        my @colors = @DEFAULT_COLORS[0 .. $color_count - 1];
-
-        my ($next_id, $piece_id_ref) = generate_pieces($size, $size);
-        my @piece_colors = assign_colors($piece_id_ref, $next_id, $size, $size, $color_count);
-        my $max_moves = int(($size * $size) / $color_count + 0.5) + $color_count;
-
-        my $fname = sprintf("level-%02d_%dx%d_c%d.json", $level_num, $size, $size, $color_count);
-        my $name = sprintf("Level %02d (%dx%d, %d mau)", $level_num, $size, $size, $color_count);
-        write_level("$out_dir/$fname", $name, $size, $size, $max_moves, \@colors, $piece_id_ref, \@piece_colors);
-
-        push @manifest, {
-            file => $fname, name => $name, w => $size, h => $size,
-            colors => $color_count, maxMoves => $max_moves, pieces => $next_id
-        };
-        $global_index++;
+    if ($PRESERVE_LEVELS{$level_num}) {
+        my ($existing) = glob("$out_dir/level-" . sprintf("%02d", $level_num) . "_*.json");
+        push @manifest, read_existing_manifest_entry($existing);
+        next;
     }
+
+    my @colors = @DEFAULT_COLORS[0 .. $color_count - 1];
+
+    my ($next_id, $piece_id_ref) = generate_pieces($size_w, $size_h);
+    my @piece_colors = assign_colors($piece_id_ref, $next_id, $size_w, $size_h, $color_count);
+    my $max_moves = int(($size_w * $size_h) / $color_count + 0.5) + $color_count;
+
+    my $fname = sprintf("level-%02d_%dx%d_c%d.json", $level_num, $size_w, $size_h, $color_count);
+    my $name = sprintf("Level %02d (%dx%d, %d mau)", $level_num, $size_w, $size_h, $color_count);
+    write_level("$out_dir/$fname", $name, $size_w, $size_h, $max_moves, \@colors, $piece_id_ref, \@piece_colors);
+
+    push @manifest, {
+        file => $fname, name => $name, w => $size_w, h => $size_h,
+        colors => $color_count, maxMoves => $max_moves, pieces => $next_id
+    };
 }
 
 # Manifest for quick reference / potential future wiring into gameplay.
