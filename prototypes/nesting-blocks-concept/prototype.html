@@ -4,12 +4,16 @@
      satisfying and clear?
      Date: 2026-08-12
 
-     MODEL: every piece IS a square box. The box is what collides and what
-     holds other pieces -- inner and outer are the same box for every shape.
-     The circle/triangle/square art is a motif drawn inside that box, not a
-     collision shape. The box is drawn so this is visible, never implied.
+     MODEL: shape-accurate collision. A piece occupies and contains space
+     according to its ACTUAL drawn shape (circle = circle, triangle =
+     triangle), computed with SAT (separating axis theorem). This is the
+     whole puzzle: a circle wastes its bounding box's corners, a triangle
+     wastes even more, so shape choice is a real spatial trade-off, not a
+     cosmetic one. Round 6 briefly made every shape use its bounding box for
+     capacity ("one shared box") -- that was a misreading of feedback and
+     has been reverted; do not reintroduce it without being explicitly asked.
 
-     Portrait mobile-web layout: the SVG user space is a fixed 1080x1920 and
+     Portrait mobile-web layout: the SVG user space is a fixed 1080x1780 and
      scales to whatever screen it lands on.
 -->
 <!DOCTYPE html>
@@ -51,15 +55,19 @@
   .piece.dragging { cursor: grabbing; }
   .piece.settling { transition: transform 90ms ease-out; }
 
-  /* The box: the thing that actually collides and contains. */
-  .box { stroke-width: 3; }
-  .motif { pointer-events: none; }
-  .piece.resolved .box { stroke-opacity: 0.9; }
-  .piece.valid   .box { stroke: #4ade80 !important; stroke-width: 6; }
-  .piece.invalid .box { stroke: #ef4444 !important; stroke-width: 6; }
+  /* The shape itself is the hitbox -- no separate box drawn around it. */
+  .shape { stroke: transparent; stroke-width: 4; }
+  .piece.resolved .shape { stroke: rgba(255,255,255,0.4); }
+  .piece.valid   .shape { stroke: #4ade80 !important; stroke-width: 6; }
+  .piece.invalid .shape { stroke: #ef4444 !important; stroke-width: 6; }
 
   .hitbox { fill: none; stroke: #ff00ff; stroke-width: 3; stroke-dasharray: 10 8; display: none; pointer-events: none; }
   body.show-hitbox .hitbox { display: block; }
+
+  /* Rotate mode is entered by holding a piece still (long-press), not by
+     grabbing a small target -- this flashes on the instant it arms so a
+     touch has some feedback before the finger starts tracing the angle. */
+  .piece.rotate-armed .shape { stroke: #ffe27a !important; stroke-width: 6; }
 
   #guide { fill: none; stroke: rgba(255,255,255,0.6); stroke-width: 4; stroke-dasharray: 12 10; pointer-events: none; }
 
@@ -82,7 +90,7 @@
 
 <header>
   <h1>Nesting Blocks — Concept Prototype</h1>
-  <p class="hint">Moi khoi la mot cai HOP. Long hop nho vao hop to (ke ca khi con o khay), roi xep tat ca vao khung cam.</p>
+  <p class="hint">Giu yen mot cho tren khoi xanh la (khong di chuyen) de vao che do xoay, roi ve vong cung de xoay tu do. Keo binh thuong de di chuyen / long vao khoi xanh duong / xep vao khung cam.</p>
   <div id="levelLabel"></div>
 </header>
 
@@ -120,26 +128,66 @@ const BOARD = 640;
 const BOARD_X = (CANVAS_W - BOARD) / 2;   // 220
 const BOARD_Y = 40;
 
-// Divides every size in play (160 / 400 / 800), so every flush-packed
-// position is reachable.
-const GRID = 40;
+// Divides every size in play (160 / 320 / 640), so every flush-packed
+// position is still exactly reachable. Kept small for a smooth, near-free
+// drag feel -- snapping only ever happens at drop (see onPointerUp), never
+// during the drag itself, so this number affects placement precision only,
+// not how choppy the piece looks while moving.
+const GRID = 10;
 
 const EPS = 0.5;          // boxes may touch; only real penetration collides
 const BOARD_KEEPOUT = 20; // parked pieces must clear the board's outer stroke
 
+// ---------------------------------------------------------------------------
+// Level format -- this is the level-design surface. Each level is:
+//   { name, blues: [shape, shape], greens: [{shape, count}, ...] }
+//
+// Structural rule (not a level-design choice): exactly 2 blue containers.
+// The board is exactly 2*BLUE wide, and the tray/board layout in
+// buildLevel() places them side by side spanning it -- a different count
+// needs a layout change, not just a data change. Everything else is free:
+// which shape each blue is, and the green shape mix/total.
+//
+// Capacity budget at the current scale (GREEN=160, BLUE=320, BOARD=640),
+// so a new level can be sized without guessing:
+//   - board strip (below the 2 blues): exactly 8 greens (4 cols x 2 rows)
+//   - a SQUARE container: exactly 4 greens (zero-slack 2x2 tiling)
+//   - a CIRCLE container: exactly 1 centred green (2 side by side does not
+//     fit the radius at this GREEN:BLUE ratio -- see round 8's README notes)
+//   - a TRIANGLE container: not pre-computed -- shapeContains() handles it
+//     correctly, but no known-good slot layout exists for it here. A level
+//     using one must be checked by hand (DBG console) before shipping.
+// So max total greens = 8 (strip) + (4 or 1 per blue, by its shape).
+// Two squares -> up to 16. One square + one circle -> up to 13. Two circles
+// -> up to 10. ALWAYS VERIFY with `DBG.level = i; DBG.autoSolve().won`
+// after adding or editing a level -- see README "Adding a level".
+// ---------------------------------------------------------------------------
 const LEVELS = [
-  { green: 8 },
-  { green: 12 },  // board strip alone holds 10 -- level 2 forces nesting
+  {
+    name: 'Level 1',
+    blues: ['square', 'circle'],
+    greens: [ { shape: 'square', count: 3 }, { shape: 'circle', count: 3 }, { shape: 'triangle', count: 2 } ],
+  },
+  {
+    name: 'Level 2',
+    blues: ['square', 'circle'],
+    greens: [ { shape: 'square', count: 4 }, { shape: 'circle', count: 4 }, { shape: 'triangle', count: 4 } ],
+  },
+  {
+    name: 'Level 3',
+    blues: ['square', 'square'],   // two square containers -> 8 nestable, not 5
+    greens: [ { shape: 'square', count: 6 }, { shape: 'circle', count: 5 }, { shape: 'triangle', count: 5 } ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
 // Geometry
 //
-// ONE box model: a piece's box is both what it occupies and what it can hold.
-// geomOf() is the single place that decides this. To go back to
-// shape-accurate collision, return the shape path here instead -- everything
-// downstream (SAT overlap, containment) already handles arbitrary convex
-// shapes and circles.
+// geomOf() is the single place that decides what a piece occupies and what
+// it can hold -- shape-accurate, computed from the same path used to draw
+// it. Everything downstream (SAT overlap, containment, drop targeting)
+// reads only through geomOf()/worldGeom(), so this one function is the
+// entire collision model.
 // ---------------------------------------------------------------------------
 function motifPath(shape, size) {
   if (shape === 'triangle') return [[size/2, 0], [size, size], [0, size]];
@@ -150,8 +198,40 @@ function rectGeom(x, y, w, h) {
   return { kind: 'poly', pts: [[x,y],[x+w,y],[x+w,y+h],[x,y+h]] };
 }
 
-// The box. Same for every shape, inner and outer alike.
-function geomOf(piece, x, y) { return rectGeom(x, y, piece.size, piece.size); }
+function rotatePt(px, py, cx, cy, deg) {
+  if (!deg) return [px, py];
+  const rad = deg * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+  const dx = px - cx, dy = py - cy;
+  return [cx + dx*cos - dy*sin, cy + dx*sin + dy*cos];
+}
+
+// A piece's own rotation is always relative to its PARENT's unrotated local
+// frame (or to world space, for a top-level piece). Its EFFECTIVE rotation
+// -- what actually gets drawn/collided -- also carries every ancestor's
+// rotation, so a container spinning visibly spins its contents with it.
+// Nesting in this game is exactly one level deep (green -> blue), but this
+// is written recursively so it stays correct if that ever changes.
+function effectiveRotation(piece) {
+  const own = piece.rotation || 0;
+  return piece.parent ? own + effectiveRotation(piece.parent) : own;
+}
+
+// The real shape: a circle collides/contains as a circle, a triangle as a
+// triangle. This is what makes shape choice matter for packing. Rotation is
+// free-angle around the piece's own centre -- a circle is unaffected by
+// definition, a square becomes a diamond off-axis, a triangle genuinely
+// changes footprint (this is the point: two triangles can interlock).
+function geomOf(piece, x, y) {
+  if (piece.shape === 'circle') {
+    return { kind: 'circle', cx: x + piece.size/2, cy: y + piece.size/2, r: piece.size/2 };
+  }
+  const c = piece.size / 2, rot = effectiveRotation(piece);
+  const pts = motifPath(piece.shape, piece.size).map(([px, py]) => {
+    const [rx, ry] = rotatePt(px, py, c, c, rot);
+    return [rx + x, ry + y];
+  });
+  return { kind: 'poly', pts };
+}
 
 function edgeNormals(pts) {
   const out = [];
@@ -273,10 +353,20 @@ const boardKeepOut = () => rectGeom(
   BOARD_X - BOARD_KEEPOUT, BOARD_Y - BOARD_KEEPOUT,
   BOARD + BOARD_KEEPOUT*2, BOARD + BOARD_KEEPOUT*2);
 
+// localX/localY are stored in the parent's OWN unrotated frame (same frame
+// motifPath/geomOf use for the parent at rotation 0) -- so a child's world
+// position has to be rotated by the parent's CURRENT rotation, around the
+// parent's centre, before adding the parent's world offset. This is what
+// makes rotating a container carry its contents around with it instead of
+// leaving them stranded at their pre-rotation spot.
 function worldPos(p) {
   if (!p.parent) return { x: p.x, y: p.y };
   const w = worldPos(p.parent);
-  return { x: w.x + p.localX, y: w.y + p.localY };
+  const rot = p.parent.rotation || 0;
+  if (!rot) return { x: w.x + p.localX, y: w.y + p.localY };
+  const c = p.parent.size / 2;
+  const [rx, ry] = rotatePt(p.localX, p.localY, c, c, rot);
+  return { x: w.x + rx, y: w.y + ry };
 }
 function worldGeom(p) {
   const w = worldPos(p);
@@ -288,16 +378,9 @@ function worldGeom(p) {
 // ---------------------------------------------------------------------------
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-function boxNode(size, cls) {
-  const n = document.createElementNS(SVG_NS, 'rect');
-  n.setAttribute('x', 0); n.setAttribute('y', 0);
-  n.setAttribute('width', size); n.setAttribute('height', size);
-  n.setAttribute('rx', 8);
-  n.setAttribute('class', cls);
-  return n;
-}
-
-function motifNode(piece, color) {
+// Builds the actual shape node (circle or polygon) -- used for both the
+// visible fill and the debug hitbox overlay, so they can never disagree.
+function shapeNode(piece, cls) {
   let n;
   if (piece.shape === 'circle') {
     n = document.createElementNS(SVG_NS, 'circle');
@@ -308,8 +391,7 @@ function motifNode(piece, color) {
     n = document.createElementNS(SVG_NS, 'polygon');
     n.setAttribute('points', motifPath(piece.shape, piece.size).map(p => p.join(',')).join(' '));
   }
-  n.setAttribute('fill', color);
-  n.setAttribute('class', 'motif');
+  n.setAttribute('class', cls);
   return n;
 }
 
@@ -321,21 +403,15 @@ function makePiece(color, shape, x, y) {
 
   const piece = {
     el: g, color, shape, size,
-    x, y, homeX: x, homeY: y,
+    x, y, homeX: x, homeY: y, rotation: 0,
     onBoard: false, parent: null, localX: 0, localY: 0,
     children: color === 'blue' ? [] : null
   };
 
-  // Box first (translucent, outlined) then the motif on top -- the box is
-  // the piece, the motif just says which shape it is.
-  const box = boxNode(size, 'box');
-  box.setAttribute('fill', solid);
-  box.setAttribute('fill-opacity', 0.22);
-  box.setAttribute('stroke', solid);
-  box.setAttribute('stroke-opacity', 0.55);
-  g.appendChild(box);
-  g.appendChild(motifNode(piece, solid));
-  g.appendChild(boxNode(size, 'hitbox'));   // debug overlay == the same box
+  const fill = shapeNode(piece, 'shape');
+  fill.setAttribute('fill', solid);
+  g.appendChild(fill);
+  g.appendChild(shapeNode(piece, 'hitbox')); // debug overlay -- same path as the fill
 
   (color === 'blue' ? lyBlue : lyGreen).appendChild(g);
   g.addEventListener('pointerdown', (e) => onPointerDown(e, piece));
@@ -347,22 +423,29 @@ function makePiece(color, shape, x, y) {
 
 function render(p) {
   const w = worldPos(p);
-  p.el.setAttribute('transform', `translate(${w.x} ${w.y})`);
+  const c = p.size / 2;
+  const rot = effectiveRotation(p); // own rotation PLUS every ancestor's
+  // Same order as geomOf: rotate around the local centre, then translate --
+  // so the drawn shape and the collision shape never disagree.
+  const t = rot
+    ? `translate(${w.x} ${w.y}) rotate(${rot} ${c} ${c})`
+    : `translate(${w.x} ${w.y})`;
+  p.el.setAttribute('transform', t);
   p.el.classList.toggle('resolved', isResolved(p));
   if (p.children) p.children.forEach(render);
 }
 function renderAll() { pieces.filter(p => !p.parent).forEach(render); }
 
-// Outlines the container's interior while dragging over it.
+// Outlines the container's TRUE interior (its real shape) while dragging
+// over it -- a circle container shows a circle, not its bounding box.
 function showGuide(container) {
   guideLayer.textContent = '';
   if (!container) return;
   const w = worldPos(container);
-  const n = document.createElementNS(SVG_NS, 'rect');
-  n.setAttribute('x', w.x); n.setAttribute('y', w.y);
-  n.setAttribute('width', container.size); n.setAttribute('height', container.size);
-  n.setAttribute('rx', 8);
+  const n = shapeNode(container, '');
+  n.removeAttribute('class');
   n.setAttribute('id', 'guide');
+  n.setAttribute('transform', `translate(${w.x} ${w.y})`);
   guideLayer.appendChild(n);
 }
 function hideGuide() { guideLayer.textContent = ''; }
@@ -443,20 +526,37 @@ function planDrop(piece, rawX, rawY) {
 function detach(piece) {
   if (!piece.parent) return;
   const w = worldPos(piece);
-  const sib = piece.parent.children;
-  sib.splice(sib.indexOf(piece), 1);
+  const r = effectiveRotation(piece); // resolve to an absolute angle BEFORE
+  const sib = piece.parent.children;  // losing the parent that was
+  sib.splice(sib.indexOf(piece), 1);  // contributing part of it
   piece.parent = null;
   piece.x = w.x; piece.y = w.y;
+  piece.rotation = r;
+}
+
+// Converts a world drop position into the container's local (unrotated)
+// frame -- the inverse of worldPos()'s rotation, so a later worldPos() call
+// reconstructs exactly this same world position for as long as the
+// container's rotation doesn't change again, and correctly swings the
+// piece if it does. The piece's rotation is stored the same way: relative
+// to the container, with the container's current rotation subtracted out.
+function nestAtWorld(piece, container, worldX, worldY) {
+  const cw = worldPos(container);
+  const rot = container.rotation || 0;
+  const c = container.size / 2;
+  const dx = worldX - cw.x, dy = worldY - cw.y;
+  const [lx, ly] = rotatePt(dx, dy, c, c, -rot);
+  piece.parent = container;
+  piece.localX = lx;
+  piece.localY = ly;
+  piece.rotation = (((piece.rotation || 0) - rot) % 360 + 360) % 360;
+  piece.onBoard = false;
+  container.children.push(piece);
 }
 
 function commit(piece, plan) {
   if (plan.kind === 'nest') {
-    const cw = worldPos(plan.container);
-    piece.parent = plan.container;
-    piece.localX = plan.x - cw.x;
-    piece.localY = plan.y - cw.y;
-    piece.onBoard = false;
-    plan.container.children.push(piece);
+    nestAtWorld(piece, plan.container, plan.x, plan.y);
   } else if (plan.kind === 'board') {
     piece.x = plan.x; piece.y = plan.y; piece.onBoard = true;
   } else if (plan.kind === 'stage') {
@@ -470,8 +570,17 @@ function commit(piece, plan) {
 
 function restore(piece, prev) {
   if (prev && prev.parent) {
+    // prev.lx/ly are in the container's LOCAL (unrotated) frame -- rotate
+    // back into world space by the container's CURRENT rotation before
+    // handing to commit(), which will immediately convert it back to local
+    // via nestAtWorld(). Round-trips to the exact original local offset as
+    // long as the container hasn't rotated in the meantime; if it has, this
+    // correctly re-anchors relative to its new orientation instead.
     const cw = worldPos(prev.parent);
-    commit(piece, { kind:'nest', container: prev.parent, x: cw.x + prev.lx, y: cw.y + prev.ly });
+    const rot = prev.parent.rotation || 0;
+    const c = prev.parent.size / 2;
+    const [wx, wy] = rotatePt(prev.lx, prev.ly, c, c, rot);
+    commit(piece, { kind:'nest', container: prev.parent, x: cw.x + wx, y: cw.y + wy });
   } else if (prev) {
     commit(piece, { kind: prev.onBoard ? 'board' : 'stage', x: prev.x, y: prev.y });
   } else {
@@ -491,48 +600,143 @@ function svgPoint(e) {
   return { x: p.x, y: p.y };
 }
 
+// ---------------------------------------------------------------------------
+// One gesture, three possible outcomes -- decided by how the finger behaves
+// after pointerdown, not by which pixel it landed on (no small target to
+// miss on a phone):
+//   pending      -- just touched down, waiting to see what happens next
+//   moving       -- moved past MOVE_THRESHOLD before the long-press fired
+//   rotate-armed -- held still for LONG_PRESS_MS; waiting for the finger to
+//                   clear a small dead-zone around the piece's centre so the
+//                   very first angle sample isn't numerically unstable
+//   rotating     -- tracking the angle from centre to pointer, continuously,
+//                   relative to wherever rotation started (not an absolute
+//                   "up = 0" reference, since there's no fixed handle
+//                   position anymore)
+// ---------------------------------------------------------------------------
+const MOVE_THRESHOLD = 10;    // client px -- movement that cancels a pending long-press
+const LONG_PRESS_MS = 380;    // hold-still time to arm rotate mode
+const ROTATE_DEADZONE = 24;   // SVG world px from centre before angle tracking starts
+
+function pieceWorldCenter(piece) {
+  const w = worldPos(piece);
+  return { x: w.x + piece.size/2, y: w.y + piece.size/2 };
+}
+
+function checkRotationValid(piece) {
+  const w = worldPos(piece);
+  return piece.parent ? validInside(piece, piece.parent, w.x, w.y)
+       : piece.onBoard ? validOnBoard(piece, w.x, w.y)
+       : validStaged(piece, w.x, w.y);
+}
+
 function onPointerDown(e, piece) {
   e.preventDefault();
-  const prev = piece.parent
+  const downP = svgPoint(e); // captured NOW, at the actual touch point -- beginMove()
+                              // must use this, not wherever the finger is once the
+                              // move-threshold is crossed, or the piece jumps on grab
+  const timer = setTimeout(() => { if (drag && drag.phase === 'pending') armRotate(); }, LONG_PRESS_MS);
+  drag = {
+    piece, phase: 'pending', startClientX: e.clientX, startClientY: e.clientY, timer,
+    downX: downP.x, downY: downP.y,
+    dx: 0, dy: 0, prev: null, plan: null,       // filled in by beginMove()
+    rotateBefore: 0, rotateStartAngle: 0, rotateStartRotation: 0, // filled in as rotation starts tracking
+  };
+  svg.setPointerCapture(e.pointerId);
+}
+
+function beginMove() {
+  clearTimeout(drag.timer);
+  const piece = drag.piece;
+  drag.prev = piece.parent
     ? { parent: piece.parent, lx: piece.localX, ly: piece.localY }
     : { x: piece.x, y: piece.y, onBoard: piece.onBoard };
-
   detach(piece);
   piece.onBoard = false;
-
-  const p = svgPoint(e);
-  drag = { piece, dx: p.x - piece.x, dy: p.y - piece.y, prev, plan: null };
-
+  drag.dx = drag.downX - piece.x;
+  drag.dy = drag.downY - piece.y;
+  drag.phase = 'moving';
   piece.el.classList.remove('settling', 'resolved');
   piece.el.classList.add('dragging');
   piece.el.parentNode.appendChild(piece.el);
-  svg.setPointerCapture(e.pointerId);
+}
+
+function armRotate() {
+  const piece = drag.piece;
+  drag.rotateBefore = piece.rotation;
+  drag.phase = 'rotate-armed';
+  piece.el.classList.remove('settling', 'resolved');
+  piece.el.classList.add('rotate-armed');
+  piece.el.parentNode.appendChild(piece.el);
+  if (navigator.vibrate) navigator.vibrate(15); // mode-change tick, if the device supports it
 }
 
 function onPointerMove(e) {
   if (!drag) return;
-  const p = svgPoint(e);
-  const rawX = p.x - drag.dx, rawY = p.y - drag.dy;
   const piece = drag.piece;
 
-  piece.x = rawX; piece.y = rawY;   // tracks the finger/cursor exactly
+  if (drag.phase === 'pending') {
+    const dist = Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY);
+    if (dist >= MOVE_THRESHOLD) beginMove();
+    else return;
+  }
+
+  if (drag.phase === 'moving') {
+    const p = svgPoint(e);
+    const rawX = p.x - drag.dx, rawY = p.y - drag.dy;
+    piece.x = rawX; piece.y = rawY;   // tracks the finger/cursor exactly
+    render(piece);
+
+    const plan = planDrop(piece, rawX, rawY);
+    drag.plan = plan;
+    showGuide(plan.container || (piece.color === 'green'
+      ? containerUnder(rawX + piece.size/2, rawY + piece.size/2, piece) : null));
+
+    const ok = plan.kind !== 'none';
+    piece.el.classList.toggle('valid', ok);
+    piece.el.classList.toggle('invalid', !ok);
+    return;
+  }
+
+  // rotate-armed or rotating: both need the current angle from centre.
+  const c = pieceWorldCenter(piece);
+  const p = svgPoint(e);
+  const distFromCentre = Math.hypot(p.x - c.x, p.y - c.y);
+
+  if (drag.phase === 'rotate-armed') {
+    if (distFromCentre < ROTATE_DEADZONE) return; // too close to centre for a stable angle yet
+    drag.rotateStartAngle = Math.atan2(p.y - c.y, p.x - c.x) * 180 / Math.PI;
+    drag.rotateStartRotation = piece.rotation;
+    drag.phase = 'rotating';
+    // fall through so this same move already applies (delta 0 -- no visible jump)
+  }
+
+  const theta = Math.atan2(p.y - c.y, p.x - c.x) * 180 / Math.PI;
+  const delta = theta - drag.rotateStartAngle;
+  piece.rotation = (((drag.rotateStartRotation + delta) % 360) + 360) % 360;
   render(piece);
 
-  const plan = planDrop(piece, rawX, rawY);
-  drag.plan = plan;
-  showGuide(plan.container || (piece.color === 'green'
-    ? containerUnder(rawX + piece.size/2, rawY + piece.size/2, piece) : null));
-
-  const ok = plan.kind !== 'none';
+  const ok = checkRotationValid(piece);
   piece.el.classList.toggle('valid', ok);
   piece.el.classList.toggle('invalid', !ok);
 }
 
 function onPointerUp() {
   if (!drag) return;
+  clearTimeout(drag.timer);
   const piece = drag.piece;
-  const plan = drag.plan || planDrop(piece, piece.x, piece.y);
 
+  if (drag.phase === 'pending') { drag = null; return; } // plain tap, no side effects
+
+  if (drag.phase === 'rotate-armed' || drag.phase === 'rotating') {
+    piece.el.classList.remove('valid', 'invalid', 'rotate-armed');
+    if (!checkRotationValid(piece)) { piece.rotation = drag.rotateBefore; render(piece); }
+    drag = null;
+    return;
+  }
+
+  // phase === 'moving'
+  const plan = drag.plan || planDrop(piece, piece.x, piece.y);
   piece.el.classList.remove('dragging', 'valid', 'invalid');
   piece.el.classList.add('settling');
   hideGuide();
@@ -544,9 +748,24 @@ function onPointerUp() {
   checkWin();
 }
 
+function onPointerCancel() {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  const piece = drag.piece;
+  if (drag.phase === 'moving') {
+    restore(piece, drag.prev);
+    renderAll();
+  } else if (drag.phase === 'rotate-armed' || drag.phase === 'rotating') {
+    piece.rotation = drag.rotateBefore;
+    piece.el.classList.remove('valid', 'invalid', 'rotate-armed');
+    render(piece);
+  }
+  drag = null;
+}
+
 svg.addEventListener('pointermove', onPointerMove);
 svg.addEventListener('pointerup', onPointerUp);
-svg.addEventListener('pointercancel', onPointerUp);
+svg.addEventListener('pointercancel', onPointerCancel);
 
 // ---------------------------------------------------------------------------
 // Win / levels
@@ -581,24 +800,24 @@ function buildLevel() {
   bs.setAttribute('stroke', '#ff8c00');
 
   const cfg = LEVELS[currentLevel];
-  const shapes = ['square', 'circle', 'triangle'];
+  const greenShapes = cfg.greens.flatMap(g => Array(g.count).fill(g.shape));
   const perRow = 5, gap = 40;
 
   const label = document.getElementById('trayLabel');
   label.setAttribute('x', 60); label.setAttribute('y', BOARD_Y + BOARD + 60);
 
   let y = BOARD_Y + BOARD + 100;
-  for (let i = 0; i < cfg.green; i++) {
+  greenShapes.forEach((shape, i) => {
     const col = i % perRow;
     if (i > 0 && col === 0) y += GREEN + gap;
-    makePiece('green', shapes[i % shapes.length], 60 + col * (GREEN + gap), y);
-  }
+    makePiece('green', shape, 60 + col * (GREEN + gap), y);
+  });
   y += GREEN + gap * 2;
 
-  ['square', 'circle'].forEach((s, i) => makePiece('blue', s, 60 + i * (BLUE + gap), y));
+  cfg.blues.forEach((s, i) => makePiece('blue', s, 60 + i * (BLUE + gap), y));
 
   levelLabelEl.textContent =
-    `Level ${currentLevel+1} / ${LEVELS.length} — ${cfg.green} hop xanh la + 2 hop xanh duong`;
+    `Level ${currentLevel+1} / ${LEVELS.length} — ${cfg.name} (${greenShapes.length} hop xanh la + ${cfg.blues.length} hop xanh duong)`;
   checkWin();
 }
 
@@ -607,33 +826,66 @@ function buildLevel() {
 // ---------------------------------------------------------------------------
 function put(piece, rawX, rawY) { return commit(piece, planDrop(piece, rawX, rawY)); }
 
-// 2x2 fills a blue box exactly (320 = 2 x 160).
-const QUAD = [[0,0],[GREEN,0],[0,GREEN],[GREEN,GREEN]];
-function nestSome() {
-  const g = pieces.filter(p => p.color === 'green');
-  const bSq = pieces.find(p => p.color==='blue' && p.shape==='square');
-  const bCi = pieces.find(p => p.color==='blue' && p.shape==='circle');
-  const sw = worldPos(bSq), cw = worldPos(bCi);
-  QUAD.forEach(([lx,ly], i) => put(g[i], sw.x+lx, sw.y+ly));
-  QUAD.forEach(([lx,ly], i) => put(g[4+i], cw.x+lx, cw.y+ly));
-}
+// Known-good nesting slots per container shape, in the container's own
+// local (unrotated) frame -- see the LEVELS capacity-budget comment above
+// for how these numbers were derived. This is what makes autoSolve() a
+// real feasibility check for ANY level in this format, not just the
+// original two: it is not a search/solver, just a lookup of the one known
+// packing this game was designed around.
+const CONTAINER_SLOTS = {
+  square: [[0,0],[GREEN,0],[0,GREEN],[GREEN,GREEN]],      // 2x2, zero slack
+  circle: [[(BLUE-GREEN)/2, (BLUE-GREEN)/2]],              // 1, centred
+  // no 'triangle' entry -- see the LEVELS comment; a level using one must
+  // be checked by hand.
+};
 
-function autoSolve() {
-  const g = pieces.filter(p => p.color === 'green');
-  const bSq = pieces.find(p => p.color==='blue' && p.shape==='square');
-  const bCi = pieces.find(p => p.color==='blue' && p.shape==='circle');
-  let i = 0;
-  if (g.length > 10) { nestSome(); i = 8; }
-  put(bSq, BOARD_X, BOARD_Y);
-  put(bCi, BOARD_X + BLUE, BOARD_Y);
-  const cols = BOARD / GREEN;                    // 4 greens across the board
-  const rows = (BOARD - BLUE) / GREEN;           // strip left under the blues
-  for (let r = 0; r < rows && i < g.length; r++) {
-    for (let c = 0; c < cols && i < g.length; c++) {
-      put(g[i], BOARD_X + c*GREEN, BOARD_Y + BLUE + r*GREEN); i++;
+// Fills each blue container up to its known capacity (freeing up board-strip
+// room), leaving the rest of the greens untouched in the tray. Reusable on
+// its own for the "nest" screenshot scenario (assemble before placing on
+// the board), and as the first step of autoSolve().
+function nestSome() {
+  const greens = pieces.filter(p => p.color === 'green' && !p.parent);
+  const blues = pieces.filter(p => p.color === 'blue');
+  let gi = 0;
+  for (const b of blues) {
+    const slots = CONTAINER_SLOTS[b.shape] || [];
+    const sw = worldPos(b);
+    for (const [lx, ly] of slots) {
+      if (gi >= greens.length) break;
+      put(greens[gi], sw.x + lx, sw.y + ly);
+      gi++;
     }
   }
-  renderAll(); checkWin();
+}
+
+// Attempts the one known-good packing for the CURRENT level: nest into both
+// blues up to capacity, place the blues side by side on the board, fill the
+// board strip. Returns whether everything got placed -- this IS the
+// solvability check a level designer should run after adding/editing a
+// level (see README "Adding a level"), not just a screenshot helper.
+function autoSolve() {
+  nestSome();
+  const blues = pieces.filter(p => p.color === 'blue');
+  blues.forEach((b, i) => put(b, BOARD_X + i * BLUE, BOARD_Y));
+
+  const remaining = pieces.filter(p => p.color === 'green' && !p.parent && !p.onBoard);
+  const cols = BOARD / GREEN;           // greens across the board
+  const rows = (BOARD - BLUE) / GREEN;  // strip left under the blues
+  let gi = 0;
+  for (let r = 0; r < rows && gi < remaining.length; r++) {
+    for (let c = 0; c < cols && gi < remaining.length; c++) {
+      put(remaining[gi], BOARD_X + c*GREEN, BOARD_Y + BLUE + r*GREEN);
+      gi++;
+    }
+  }
+  const unplaced = remaining.slice(gi);
+
+  renderAll();
+  const won = checkWin();
+  if (!won && unplaced.length === 0) {
+    console.warn('autoSolve: everything placed but checkWin() still false -- investigate.');
+  }
+  return { won, unplacedCount: unplaced.length, unplaced };
 }
 
 const SCENARIOS = {
@@ -641,6 +893,28 @@ const SCENARIOS = {
   nest: () => { nestSome(); renderAll(); },
   solved: () => autoSolve(),
   guide: () => { showGuide(pieces.find(p => p.color==='blue' && p.shape==='circle')); },
+  // Shows all four quarter-turns side by side, using real triangle pieces
+  // (level 2 has exactly 4) laid out in guaranteed headroom near the top.
+  rotated: () => {
+    const tris = pieces.filter(p => p.shape === 'triangle');
+    const angles = [0, 37, 127, 200];
+    tris.forEach((t, i) => {
+      t.rotation = angles[i % angles.length];
+      commit(t, { kind: 'stage', x: 60 + i * (GREEN + 40), y: 100 });
+    });
+    renderAll();
+  },
+  // Nests a 2x2 into the blue square, then spins the whole assembly --
+  // proof that children now travel with a rotated container.
+  spun: () => {
+    const bSq = pieces.find(p => p.color==='blue' && p.shape==='square');
+    const g = pieces.filter(p => p.color === 'green').slice(0, 4);
+    const sw = worldPos(bSq);
+    CONTAINER_SLOTS.square.forEach(([lx,ly], i) => put(g[i], sw.x+lx, sw.y+ly));
+    bSq.rotation = 30;
+    commit(bSq, { kind: 'stage', x: 500, y: 900 });
+    renderAll();
+  },
 };
 
 function applyUrlScenario() {
@@ -670,10 +944,12 @@ window.DBG = {
   get pieces() { return pieces; },
   get level() { return currentLevel; },
   set level(v) { currentLevel = v; buildLevel(); },
-  geomOf, worldGeom, worldPos, rectGeom, boardGeom, boardKeepOut, shapesOverlap,
+  geomOf, worldGeom, worldPos, effectiveRotation, rectGeom, boardGeom, boardKeepOut, shapesOverlap,
   shapeContains, pointInShape, validOnBoard, validInside, validStaged,
-  planDrop, commit, put, detach, isResolved, checkWin, buildLevel,
+  planDrop, commit, put, detach, nestAtWorld, isResolved, checkWin, buildLevel,
   containerUnder, snap, autoSolve, nestSome, renderAll, svgPoint,
+  rotatePt, motifPath, checkRotationValid, pieceWorldCenter, CONTAINER_SLOTS,
+  MOVE_THRESHOLD, LONG_PRESS_MS, ROTATE_DEADZONE,
   GRID, EPS, GREEN, BLUE, BOARD, BOARD_X, BOARD_Y, CANVAS_W, CANVAS_H, LEVELS
 };
 </script>

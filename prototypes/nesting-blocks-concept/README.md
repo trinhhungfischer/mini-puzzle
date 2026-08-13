@@ -243,6 +243,305 @@ on any level. Board and piece sizes still divide cleanly (640 = 4 greens =
 - Buttons meet the 44px touch minimum
 - Both levels still solve (level 2: 8 nested + 4 on the board)
 
+### Round 8 — reverted the box model; shape-accurate collision restored
+
+**This was a misreading of feedback that needs to be flagged, not just
+fixed.** Round 7's "every piece is a box" model was never requested — the
+user's round-6/7 message was pointing out an *inconsistency* (a circle
+occupied its drawn circle but held its bounding box), not asking for
+everything to become a square. Turning collision into pure box-packing
+removed the actual puzzle: with every shape colliding as its bounding box, a
+circle and a triangle are just a square with a picture on them, and shape
+choice stops mattering. The user caught this immediately ("what's left of
+the puzzle-solving element?").
+
+Reverted: `geomOf()` returns the real shape path again (circle geometry for
+circles, the true polygon for square/triangle) — the same single function
+that is now the entire collision model, so occupation, containment, and
+drop-targeting are shape-accurate everywhere without needing three separate
+fixes. The translucent "box" rendering is gone; the drawn shape and the
+debug hitbox overlay are the same path again (see `shots/nest-l1-hitbox.png`
+— dashed magenta traces the circle as a circle, the triangle as a triangle).
+
+**Consequence, re-verified by simulation, not assumed:** at the current
+mobile scale (green 160px, blue 320px — exactly 2x, tighter than the
+original 2.5x ratio), a blue circle container can fit one centred green
+comfortably (~113px from centre) but NOT two side by side (~179px from
+centre, past the 160px radius). The blue *square* container still takes a
+full 2x2 with zero slack (square-in-square has no diagonal loss). Level 2 is
+solved using exactly this: 4 nested in the square, 0 in the circle, 8 on the
+board — still 12/12, still verified via `autoSolve()` + `checkWin()`, not
+just claimed.
+
+Kept from round 7 (not reverted, not implicated in this bug): the portrait
+mobile layout, `getScreenCTM()` touch mapping, and the exact-aim-or-bounce
+drop behavior from round 6.
+
+**Process note for next time:** when a user's phrasing is ambiguous between
+"here's a bug" and "here's a new requirement," the round-4/5 pattern (state
+the interpretation back in one sentence before implementing, e.g. "so you
+want container capacity to equal the piece's bounding box, confirm?") would
+have caught this before two rounds of work went the wrong way. See the new
+project doc `docs/working-agreement.md` for the standing rule this produced.
+
+### Round 9 — rotation, added on top of shape-accurate collision
+
+Piece rotation in 90-degree steps (`piece.rotation`), so shape choice isn't
+just "which silhouette" but "which silhouette, which way" — two triangles in
+different orientations pack differently against neighbours.
+
+- **Geometry**: `geomOf()` rotates the local shape path around its own
+  centre before translating to world position; a circle ignores rotation
+  (rotationally symmetric by definition), a square looks the same at 90/180/
+  270 (harmless no-op), a triangle genuinely changes footprint. Rendering
+  applies the identical `rotate(deg, cx, cy)` before `translate(...)` in the
+  SVG transform, so drawn shape and hitbox can't drift apart.
+- **Interaction**: tap-to-rotate, drag-to-move, sharing one pointer gesture
+  (no separate rotate button/handle). Below `TAP_THRESHOLD` (12 real screen
+  px) of movement, release rotates the piece 90 degrees in place; past it,
+  the gesture becomes a normal drag and rotation never fires. A rotation is
+  rejected (piece stays exactly as it was — no fallback repositioning) if
+  the rotated shape would no longer fit in its current context (nested,
+  on-board, or staged), checked with the same `validInside`/`validOnBoard`/
+  `validStaged` functions everything else uses.
+
+QA: rotated hitbox differs from unrotated and matches the rendered bbox
+exactly; a point inside a triangle's tip before rotation is outside after a
+90-degree turn (proves the collision shape actually turns, not just the
+pixels); rotation succeeds when unobstructed and four quarter-turns return
+to 0; rotation is rejected for a nested piece when it would poke out of its
+container (re-validated on every single quarter-turn, not just the target
+angle); a real drag (past the tap threshold) never rotates; both levels
+still solve unmodified (default `rotation: 0` reproduces round-8 geometry
+exactly, verified, not assumed).
+
+### Round 10 — free (continuous) rotation, replacing the 90-degree tap
+
+The user tried the quarter-turn tap-to-rotate from round 9 and asked for
+free rotation instead ("I think that'll be much better"). Implemented as a
+**separate drag handle**, not an extension of the tap gesture:
+
+- A small knob + stem renders above each **green** piece (blue containers
+  deliberately excluded — see below). Dragging the knob rotates the piece
+  continuously by tracking the angle from the piece's centre to the
+  pointer; dragging the piece body still moves it, exactly as before. The
+  two are different DOM targets (`e.stopPropagation()` on the knob's
+  pointerdown stops it from also bubbling into the move-drag), so there's
+  no gesture ambiguity or shared threshold logic to get wrong.
+- No angle snapping — genuinely continuous, per the request. Live feedback
+  (green/red outline) previews validity while dragging, but nothing is
+  blocked mid-drag; only the release angle is checked, and an invalid
+  release reverts to the rotation the piece had before that specific drag
+  (not to 0) — confirmed by sweeping a full 360-degree circle through the
+  real event pipeline on a piece nested in a container corner: some angles
+  reject-and-revert, others accept, and the piece never gets un-nested by a
+  rotation attempt regardless of outcome.
+- The math (`geomOf`'s rotation, unchanged since round 9) already supported
+  arbitrary angles — SAT and point-in-polygon don't care about the angle
+  being a multiple of 90. Free rotation only required new *interaction*
+  code, not new *collision* code.
+- **Scoped to green pieces only.** Rotating a blue container would require
+  its nested children's world position to rotate around the container's own
+  centre along with it, which `worldPos()` doesn't do (it just adds a fixed
+  local offset) — correct compounding is straightforward but adds real
+  complexity, and it's out of scope for "let me rotate the pieces I'm
+  trying to fit." Flagging this per the working agreement rather than
+  silently deciding it doesn't matter.
+
+**QA methodology bug caught and fixed, not just the feature:** the first
+verification pass compared `element.getBBox()` (which ignores the element's
+OWN ancestor transforms) against `geomOf()`'s world-space output, and
+"passed" at round 9's 90-degree angles only by coincidence — a triangle
+inscribed in a square has the same axis-aligned bbox at every 90-degree
+multiple, so the flawed comparison couldn't tell rotation was being ignored.
+At a free angle (127 degrees) it failed loudly (32px off), which is what
+caught it. Fixed by comparing in actual screen space via
+`element.getScreenCTM()` on both the expected and rendered points — 0.00px
+delta at eight tested angles including 37/127/233/311 degrees. Lesson: a
+test that only ever runs at 90-degree-symmetric angles isn't testing
+rotation, it's testing translation. Re-verify test methodology itself when
+extending a feature's range, not just the feature.
+
+### Round 11 — long-press to rotate, replacing the drag handle
+
+The round-10 handle (small knob above each piece) was reported hard to hit
+on a phone. Replaced with a long-press gesture on the piece itself — no
+small target required:
+
+- **pending** (just touched down) -> **moving** if the finger travels past
+  `MOVE_THRESHOLD` (10 client px) before the timer fires, or ->
+  **rotate-armed** if it holds still for `LONG_PRESS_MS` (380ms). A
+  `navigator.vibrate(15)` tick fires on arming where supported, plus a
+  yellow outline flash (`.rotate-armed`), since there's no handle position
+  left to signal "you're now in rotate mode."
+- Once armed, the finger must clear `ROTATE_DEADZONE` (24 world px) from the
+  piece's centre before angle tracking starts — a press near dead-centre
+  gives an unstable `atan2` reference otherwise. Rotation is **relative**:
+  the angle the finger traces from wherever tracking started is added to
+  whatever rotation the piece already had, not mapped to an absolute
+  "up = 0" the way the old handle was (there's no fixed reference point
+  anymore since press location varies).
+- Same accept/reject rule as round 10: free spin during the drag, validity
+  checked only at release, revert to the pre-drag rotation on a bad release
+  or a `pointercancel`.
+
+**Real bug found and fixed while re-verifying this round (not a test
+artifact):** `beginMove()` was capturing the finger-to-piece offset (`dx`,
+`dy`) from the *first move event that crossed the threshold* instead of
+from the original `pointerdown`. If the finger had already travelled some
+distance during the "pending" wait before crossing the threshold, the piece
+would silently re-anchor to that later point — a visible jump on grab in
+exactly the case that matters most here, since pending now waits for either
+threshold-or-long-press instead of starting the drag immediately. Fixed by
+capturing the down-point's SVG coordinates at `pointerdown` time and having
+`beginMove()` read that stored value. Caught by testing the offset
+explicitly (grab 20px off-corner, drag to a known target, assert the piece
+lands with that same 20px offset preserved) rather than only checking "did
+it move at all," which the bug would have passed.
+
+QA: quick drag (moves before long-press fires) enters `moving`, never
+rotates, and preserves the exact grab offset; long-press (real elapsed
+time, not simulated) enters `rotate-armed`, produces zero visible jump on
+the angle-establishing move, then rotates on subsequent motion while
+position stays fixed; a plain tap released before `LONG_PRESS_MS` has zero
+side effects and the pending timer doesn't fire late after release;
+`pointercancel` reverts a move mid-drag and reverts a rotation mid-drag,
+independently; a rotation attempt on a piece nested at a container corner
+leaves the piece nested and geometrically valid regardless of accept/
+reject outcome; both levels still solve unmodified.
+
+### Round 12 — rotating a container now carries its contents with it
+
+Reported: rotating the big cell (a blue container) didn't rotate the cells
+nested inside it. Root cause: `localX`/`localY` were a flat world-space
+delta captured once at nest time, reapplied unconditionally — correct for
+the container *translating* (moving it and its children by the same amount
+preserves their relationship regardless of rotation), but wrong for
+*rotating*, since a rotation has to swing the children around the
+container's centre, not leave them at a fixed offset.
+
+Fixed by treating this as a standard parent/child transform, the same way
+any scene graph does it:
+- `localX`/`localY` are defined in the container's own **unrotated** local
+  frame (the same frame `motifPath` uses for a piece at rotation 0), not in
+  world space. `worldPos()` now rotates that local offset by the parent's
+  *current* rotation, around the parent's centre, before translating by the
+  parent's world position (`nestAtWorld` performs the inverse conversion at
+  nest/re-nest time).
+- A piece's own `.rotation` is relative to its parent (or to world space,
+  if it has none) -- its **effective** rotation, used for both drawing and
+  collision, is its own rotation plus every ancestor's (`effectiveRotation`,
+  recursive though nesting is only ever 1 level deep here). `geomOf()` and
+  `render()` both switched from reading `piece.rotation` directly to
+  calling this.
+- `detach()` (picking a nested piece up) now resolves `effectiveRotation`
+  into an absolute value *before* clearing `parent`, so grabbing a piece out
+  of a rotated container doesn't snap its visible angle.
+- The blue-only restriction from round 10/11 is gone -- containers now use
+  exactly the same long-press-to-rotate gesture as any other piece. It was
+  never a deliberate design boundary, just the missing math; now that the
+  math is correct, there's no remaining reason to exclude them.
+
+**No extra validity check was needed for "does rotating a container still
+fit its children."** Local-frame storage makes this invariant automatically:
+if a child fit inside the container's shape before rotating, the same
+*rigid* rotation of container-plus-child together still fits, by
+construction -- rotating changes nothing about their relative geometry.
+`checkRotationValid()` for a container only needs to check the container's
+own shape against the board/siblings (already excluding its own children
+via the `other.parent` check in `collidesWithOthers`), which was already
+correct.
+
+QA: rotating a container by a raw angle assignment moves its children to
+positions matching the `rotatePt` formula exactly (not just "somewhere
+different"); the *rendered* SVG position of a child inside a rotated parent
+matches computed world geometry to sub-pixel precision; the same result
+holds through the real long-press-and-arc gesture on the container itself,
+including that children visibly move *during* the drag, not just after
+release; picking up a child nested in an already-rotated container preserves
+its absolute rotation exactly (no jump); rejecting an invalid drop re-nests
+the child back at the exact pre-pickup world position; a container blocked
+by a neighbour at some rotation angles and clear at others produces exactly
+that pattern through the real gesture, with the child staying correctly
+nested and the container staying board-valid regardless of outcome; both
+levels still solve unmodified. See `shots/spun-l1-hitbox.png`.
+
+### Round 13 — level-design system
+
+Levels went from a single number (`{ green: 8 }`, shapes auto-cycling
+square/circle/triangle) to explicit per-level composition:
+
+```js
+{
+  name: 'Level 1',
+  blues: ['square', 'circle'],   // exactly 2 -- see below
+  greens: [
+    { shape: 'square',   count: 3 },
+    { shape: 'circle',   count: 3 },
+    { shape: 'triangle', count: 2 },
+  ],
+}
+```
+
+**Structural rule, not a level-design choice:** exactly 2 blue containers.
+The board is exactly `2*BLUE` wide and `buildLevel()` lays them out side by
+side spanning it; a different count needs a layout change, not just a data
+edit. Everything else is free: which shape each of the 2 blues is (Level 3
+below uses two squares instead of one square + one circle), and the green
+shape mix and total.
+
+**`autoSolve()` is now a real feasibility check, not just a screenshot
+helper.** It nests into both blue containers up to their known capacity
+(`CONTAINER_SLOTS`: square = a zero-slack 2x2 = 4, circle = 1 centred --
+both derived and verified in round 8), places the blues on the board, fills
+the board strip (8 slots), and returns `{ won, unplacedCount, unplaced }`
+instead of assuming success. Verified it correctly reports failure (not a
+silent wrong success) on a deliberately-broken level asking for 20 greens
+against a 13-capacity blue pair: `unplacedCount: 7`, `won: false`, and the
+exact 7 leftover pieces listed.
+
+**Capacity budget**, so a new level can be sized without guessing (all at
+the current scale, GREEN=160 / BLUE=320 / BOARD=640):
+
+| Source | Capacity |
+|---|---|
+| Board strip (below the 2 blues) | 8 (4 cols x 2 rows) |
+| A SQUARE container | 4 (zero-slack 2x2) |
+| A CIRCLE container | 1 (centred only) |
+| A TRIANGLE container | *not pre-computed* -- see below |
+
+Max total greens = 8 + (per-blue capacity by shape). Two squares -> 16
+(Level 3). Square + circle -> 13 (Level 2 sits at 12, one under). Two
+circles -> 10.
+
+**Deliberate gap: no `triangle` entry in `CONTAINER_SLOTS`.** The
+containment math (`shapeContains`) handles a triangle container correctly
+-- nothing breaks -- but no known-good packed-slot layout has been derived
+for one, so `autoSolve()` silently nests 0 pieces into it (empty slots
+array) and treats its capacity as 0. A level wanting a triangle container is
+possible today but must be **hand-verified** via the DBG console (drag
+manually or compute slots the way round 8 did for the circle) before
+shipping, not assumed solvable from the table above.
+
+#### Adding a level
+
+1. Append an entry to `LEVELS` with `name`, `blues` (array of exactly 2
+   shapes), `greens` (array of `{shape, count}`).
+2. Check it's within budget using the table above (or just run step 3 --
+   it'll tell you).
+3. Reload, then in the browser console:
+   ```js
+   DBG.level = <index>;
+   DBG.autoSolve();   // -> { won: true, unplacedCount: 0, unplaced: [] }
+   ```
+   `won: false` means the level is over capacity (or uses an unhandled
+   shape combination) -- shrink `greens` or change a blue's shape.
+4. `./shot.sh solved <level-number-1-indexed>` for a visual sanity check.
+
+This is the same verify-by-simulation discipline as every other round in
+this file, just packaged as a reusable check instead of one-off console
+snippets.
+
 ## Next steps
 - User playtest with the actual debrief questions (hypothesis check, best/
   worst moment, surprise, PROCEED/PIVOT/KILL verdict) — still not done. This
