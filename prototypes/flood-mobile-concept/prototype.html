@@ -29,6 +29,7 @@ Date: 2026-08-11
   html, body {
     margin: 0;
     height: 100%;
+    height: 100dvh; /* real device chrome (status/gesture bars) shrinks this vs. 100% on some WebViews */
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -42,7 +43,8 @@ Date: 2026-08-11
     align-items: center;
     justify-content: flex-start;
     padding: env(safe-area-inset-top, 16px) 16px calc(env(safe-area-inset-bottom, 16px) + 12px);
-    min-height: 100%;
+    height: 100%;
+    overflow-y: auto; /* safety net — the board sizes itself to avoid needing this in the normal case */
     gap: 14px;
   }
 
@@ -62,9 +64,10 @@ Date: 2026-08-11
 
   .hud {
     display: flex;
+    align-items: stretch;
     gap: 10px;
     width: 100%;
-    max-width: 420px;
+    max-width: 480px;
   }
 
   .stat {
@@ -88,12 +91,33 @@ Date: 2026-08-11
     line-height: 1.2;
   }
 
+  /* Compact restart control living in the HUD row itself (real mobile games
+     put "restart" as a small icon near the score/status readout, not as a
+     full labeled button below the board) — replaces the old full-width
+     "Chơi lại" button in #controls. */
+  #retryIconBtn {
+    flex: 0 0 auto;
+    width: 52px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  #retryIconBtn:active { transform: scale(0.94); }
+
   /* boardWrap only exists to give layoutBoard() a stable pixel width to
      measure — the board itself is sized in exact integer pixels by JS so
      cells always come out perfectly square (see layoutBoard()). */
   #boardWrap {
-    width: min(92vw, 420px);
+    width: min(94vw, 480px);
+    flex: 1 1 auto;
+    min-height: 0; /* required for a flex child to actually shrink below its content size */
     display: flex;
+    align-items: center;
     justify-content: center;
   }
 
@@ -217,7 +241,7 @@ Date: 2026-08-11
     background: var(--panel);
     border-radius: 16px;
     padding: 10px;
-    width: min(92vw, 420px);
+    width: min(94vw, 480px);
   }
 
   #palette {
@@ -258,52 +282,6 @@ Date: 2026-08-11
     opacity: 0.6;
     cursor: not-allowed;
     box-shadow: inset 0 -3px 0 rgba(0,0,0,0.25); /* disabled buttons sit flat — no elevation to press down from */
-  }
-
-  #controls {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    width: min(92vw, 420px);
-  }
-
-  #controls button,
-  #controls a {
-    height: 46px;
-    border: 0;
-    border-radius: 12px;
-    background: var(--panel);
-    color: var(--text);
-    font-size: 0.9rem;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-  }
-
-  #controls button:active,
-  #controls a:active { transform: scale(0.98); }
-
-  #controls button:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  #levelLabel {
-    color: var(--muted);
-    font-size: 0.78rem;
-    text-align: center;
-    min-height: 1em;
-  }
-
-  #loadLink {
-    background: none;
-    border: 0;
-    color: var(--accent);
-    font-size: 0.8rem;
-    cursor: pointer;
-    padding: 4px;
   }
 
   #overlay {
@@ -348,6 +326,62 @@ Date: 2026-08-11
   #overlayBtn { background: var(--accent); }
   #overlayNextBtn { background: var(--win); }
   #overlayNextBtn.hidden { display: none; }
+
+  /* One-time mechanic intro, shown automatically the first time a level
+     that introduces something new loads (see LEVEL_INTROS) — same visual
+     language as the win/lose overlay, kept as a separate element so the
+     two never have to coordinate state. */
+  #tutorialOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 11; /* above #overlay too, in case both could ever be relevant */
+    background: rgba(10,12,16,0.88);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  #tutorialOverlay.show { display: flex; }
+
+  /* Solid panel behind the text (instead of it floating directly on the
+     translucent backdrop) — plain contrast, easier to read. */
+  #tutorialCard {
+    background: var(--panel);
+    border-radius: 20px;
+    padding: 28px 24px;
+    width: min(92vw, 360px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+  }
+
+  #tutorialIcon {
+    font-size: 2.6rem;
+    line-height: 1;
+  }
+
+  #tutorialTitle {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--accent);
+  }
+
+  #tutorialBody {
+    line-height: 1.5;
+  }
+
+  #tutorialBtn {
+    padding: 12px 28px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+  }
 </style>
 </head>
 <body>
@@ -361,24 +395,15 @@ Date: 2026-08-11
       <div class="value" id="movesLeft">--</div>
     </div>
     <div class="stat">
-      <div class="label">Kích thước</div>
-      <div class="value" id="sizeLabel">--</div>
+      <div class="label">Level</div>
+      <div class="value" id="levelNumLabel">--</div>
     </div>
+    <button id="retryIconBtn" title="Chơi lại" aria-label="Chơi lại">↻</button>
   </div>
 
   <div id="boardWrap"><div id="board"></div></div>
 
   <div id="paletteWrap"><div id="palette"></div></div>
-
-  <div id="controls">
-    <button id="retryBtn">Chơi lại</button>
-    <button id="nextBtn">Next</button>
-    <button id="backBtn">Back</button>
-    <a id="editorLink" href="editor.html">Mở Editor</a>
-  </div>
-  <div id="levelLabel"></div>
-  <button id="loadLink">Tải level JSON khác…</button>
-  <input type="file" id="fileInput" accept="application/json,.json" style="display:none">
 
   <div id="overlay">
     <div id="overlayTitle"></div>
@@ -386,6 +411,15 @@ Date: 2026-08-11
     <div id="overlayActions">
       <button id="overlayBtn">Chơi lại</button>
       <button id="overlayNextBtn" class="hidden">Level tiếp theo →</button>
+    </div>
+  </div>
+
+  <div id="tutorialOverlay">
+    <div id="tutorialCard">
+      <div id="tutorialIcon"></div>
+      <div id="tutorialTitle"></div>
+      <div id="tutorialBody" class="subtitle"></div>
+      <button id="tutorialBtn">Đã hiểu</button>
     </div>
   </div>
 
@@ -415,22 +449,52 @@ Date: 2026-08-11
   const boardEl = document.getElementById("board");
   const paletteEl = document.getElementById("palette");
   const movesLeftEl = document.getElementById("movesLeft");
-  const sizeLabelEl = document.getElementById("sizeLabel");
-  const levelLabelEl = document.getElementById("levelLabel");
-  const retryBtn = document.getElementById("retryBtn");
-  const nextBtn = document.getElementById("nextBtn");
-  const backBtn = document.getElementById("backBtn");
-  const loadLink = document.getElementById("loadLink");
-  const fileInput = document.getElementById("fileInput");
+  const levelNumLabelEl = document.getElementById("levelNumLabel");
+  const retryIconBtn = document.getElementById("retryIconBtn");
   const overlay = document.getElementById("overlay");
   const overlayTitle = document.getElementById("overlayTitle");
   const overlayDetail = document.getElementById("overlayDetail");
   const overlayBtn = document.getElementById("overlayBtn");
   const overlayNextBtn = document.getElementById("overlayNextBtn");
+  const tutorialOverlay = document.getElementById("tutorialOverlay");
+  const tutorialIcon = document.getElementById("tutorialIcon");
+  const tutorialTitle = document.getElementById("tutorialTitle");
+  const tutorialBody = document.getElementById("tutorialBody");
+  const tutorialBtn = document.getElementById("tutorialBtn");
 
-  // ---- Level pack: an ordered list of levels Next/Back page through.
-  // Built once at startup (random). Loading a custom JSON via "Tải level
-  // JSON khác" inserts it right after the current spot in the pack. ----
+  // Mechanic intros, keyed by 0-based pack index — shown once, automatically,
+  // the first time the player reaches the level that introduces that
+  // mechanic (levels 1-7 are hand-authored tutorials, so index 3 = level 4,
+  // index 7 = level 8). Since there's no Back button anymore, a normal
+  // playthrough hits each index exactly once on the way up.
+  const LEVEL_INTROS = {
+    3: {
+      icon: "❓",
+      title: "Cơ chế mới: Ẩn màu",
+      body: "Khối màu xám có dấu \"?\" đang giấu màu thật của nó. Khi vùng bạn chiếm được lan tới sát nó, màu thật sẽ lộ ra — nhưng lộ màu không có nghĩa là chiếm được, bạn vẫn phải chọn đúng màu đó ở một lượt khác."
+    },
+    7: {
+      icon: "❄️",
+      title: "Cơ chế mới: Băng",
+      body: "Khối phủ băng kèm số đếm ngược sẽ bị đóng băng trong vài lượt — dù đúng màu cũng không chiếm được lúc này. Mỗi lượt đi (ở bất kỳ đâu trên bàn) số đếm giảm 1; về 0 là tan băng và chiếm được ngay."
+    }
+  };
+
+  function showLevelIntroIfAny(packIdx) {
+    const info = LEVEL_INTROS[packIdx];
+    if (!info) return;
+    tutorialIcon.textContent = info.icon;
+    tutorialTitle.textContent = info.title;
+    tutorialBody.textContent = info.body;
+    tutorialOverlay.classList.add("show");
+  }
+
+  tutorialBtn.addEventListener("click", () => {
+    tutorialOverlay.classList.remove("show");
+  });
+
+  // ---- Level pack: an ordered list of levels, advanced only by winning
+  // (see overlayNextBtn) — built once at startup. ----
   let pack = [];
   let packIndex = 0;
 
@@ -543,15 +607,16 @@ Date: 2026-08-11
     return levels;
   }
 
-  // Relative "levels/…" resolves correctly from a local *.html file and
-  // from a clean URL like ".../prototype" (its "directory" really is this
-  // folder), but not from a Vercel pretty route like "/flood" — the
-  // rewrite is server-side and invisible to the browser's URL bar, so a
-  // relative fetch from "/flood" resolves against "/", not this folder.
-  // Same class of bug as the Editor link 404 (see #editorLink below).
+  // Relative "levels/…" resolves correctly from a local *.html file, from
+  // a clean URL like ".../prototype" (its "directory" really is this
+  // folder), and from an app root "/" (Capacitor serves index.html at
+  // https://localhost/, pathname "/" — same directory-relative case), but
+  // not from a Vercel pretty route like "/flood" — the rewrite is
+  // server-side and invisible to the browser's URL bar, so a relative
+  // fetch from "/flood" resolves against "/", not this folder.
   function levelsBaseUrl() {
     const p = location.pathname;
-    if (p.endsWith(".html") || p.endsWith("/prototype")) return "levels/";
+    if (p.endsWith(".html") || p.endsWith("/prototype") || p === "/") return "levels/";
     return "/prototypes/flood-mobile-concept/levels/";
   }
 
@@ -570,7 +635,7 @@ Date: 2026-08-11
       const r = await fetch(base + entry.file);
       if (!r.ok) throw new Error("level fetch failed: " + entry.file);
       const cfg = await r.json();
-      return validateConfig(cfg); // same validator "Tải level JSON khác…" uses — same guarantees
+      return validateConfig(cfg); // fills in defaults for any optional/missing fields
     }));
   }
 
@@ -663,16 +728,24 @@ Date: 2026-08-11
   }
 
   // Computes an exact integer pixel size per cell from the wrapper's actual
-  // width (accounting for the CSS gap between cells), then sets the board's
-  // pixel width/height and grid track sizes directly in px. This is what
-  // keeps cells perfectly square — letting the browser derive cell size
-  // from percentages or aspect-ratio can round each track differently and
-  // produce slightly uneven rows/columns. The resulting cellSize is also
-  // what renderBoard() uses to position the merge bridges in px.
+  // width AND height (accounting for the CSS gap between cells), then sets
+  // the board's pixel width/height and grid track sizes directly in px.
+  // Capping by height too (not just width) is what keeps the controls below
+  // the board (palette, Chơi lại/Next) on-screen without scrolling on real
+  // devices — #boardWrap is a flexible child that only gets the vertical
+  // space left over after the header/hud/palette/buttons take theirs, so a
+  // big board (e.g. 8x8) shrinks its cells instead of pushing those
+  // controls off the bottom of the viewport. Using exact px (not percentage
+  // or aspect-ratio) is also what keeps cells perfectly square — letting
+  // the browser derive cell size that way can round each track differently
+  // and produce slightly uneven rows/columns. The resulting cellSize is
+  // also what renderBoard() uses to position the merge bridges in px.
   function layoutBoard() {
     const wrapWidth = boardWrapEl.clientWidth;
-    const inner = Math.max(1, wrapWidth - BOARD_PADDING * 2 - BOARD_GAP * (W - 1));
-    const cellSize = Math.max(4, Math.floor(inner / W));
+    const wrapHeight = boardWrapEl.clientHeight;
+    const innerW = Math.max(1, wrapWidth - BOARD_PADDING * 2 - BOARD_GAP * (W - 1));
+    const innerH = Math.max(1, wrapHeight - BOARD_PADDING * 2 - BOARD_GAP * (H - 1));
+    const cellSize = Math.max(4, Math.floor(Math.min(innerW / W, innerH / H)));
     currentCellSize = cellSize;
     const pixelW = cellSize * W + BOARD_GAP * (W - 1) + BOARD_PADDING * 2;
     const pixelH = cellSize * H + BOARD_GAP * (H - 1) + BOARD_PADDING * 2;
@@ -875,10 +948,7 @@ Date: 2026-08-11
 
   function renderHud() {
     movesLeftEl.textContent = `${movesLeft} / ${MAX_MOVES}`;
-    sizeLabelEl.textContent = `${W}×${H}`;
-    levelLabelEl.textContent = `${levelName} (${packIndex + 1}/${pack.length})`;
-    backBtn.disabled = packIndex <= 0;
-    nextBtn.disabled = packIndex >= pack.length - 1;
+    levelNumLabelEl.textContent = `${packIndex + 1}/${pack.length}`;
   }
 
   function showOverlay(won) {
@@ -889,10 +959,9 @@ Date: 2026-08-11
       ? `Bạn phủ kín lưới trong ${MAX_MOVES - movesLeft} lượt.`
       : "Lưới chưa phủ kín một màu. Thử lại nhé.";
     // Winning is the only path that offers to jump straight to the next
-    // level — losing should only offer a retry. The overlay is full-screen
-    // (position:fixed) so Next/Back underneath are unreachable while it's
-    // up; without this button, winning used to strand the player with no
-    // way to advance except retrying the level they just won.
+    // level — losing should only offer a retry. There's no persistent
+    // Next/Back control elsewhere in the UI (see retryIconBtn), so this is
+    // the only way to advance.
     const hasNext = packIndex < pack.length - 1;
     overlayNextBtn.classList.toggle("hidden", !(won && hasNext));
   }
@@ -967,6 +1036,7 @@ Date: 2026-08-11
     pieceMechanics = lvl.pieceMechanics || lvl.pieceColors.map(() => ({ type: "normal" }));
     levelName = lvl.name;
     resetCurrentBoard();
+    showLevelIntroIfAny(i);
   }
 
   function validateConfig(cfg) {
@@ -1024,57 +1094,10 @@ Date: 2026-08-11
     };
   }
 
-  // Loading a custom level slots it into the pack right after the level
-  // you're currently on, so Next/Back keep working sensibly afterward.
-  function loadCustomLevel(rawCfg) {
-    const cfg = validateConfig(rawCfg);
-    pack.splice(packIndex + 1, 0, cfg);
-    loadPackLevel(packIndex + 1);
-  }
-
-  // The editor lives at a different URL depending on how this page is being
-  // served, so the link has to be resolved at runtime:
-  //   local file / any *.html URL       → "editor.html"
-  //   Vercel pretty route "/flood"      → "/flood/editor" (see vercel.json)
-  //   direct clean URL ".../prototype"  → ".../editor"
-  // A plain href="editor.html" only works in the first case — on the
-  // deployed site cleanUrls turns it into "/editor", which matches no route
-  // and 404s.
-  document.getElementById("editorLink").href = (function () {
-    const p = location.pathname;
-    if (p.endsWith(".html")) return "editor.html";
-    if (p.endsWith("/prototype")) return p.slice(0, -"/prototype".length) + "/editor";
-    return p.replace(/\/+$/, "") + "/editor";
-  })();
-
-  retryBtn.addEventListener("click", resetCurrentBoard);
-  nextBtn.addEventListener("click", () => {
-    if (packIndex < pack.length - 1) loadPackLevel(packIndex + 1);
-  });
-  backBtn.addEventListener("click", () => {
-    if (packIndex > 0) loadPackLevel(packIndex - 1);
-  });
+  retryIconBtn.addEventListener("click", resetCurrentBoard);
   overlayBtn.addEventListener("click", resetCurrentBoard);
   overlayNextBtn.addEventListener("click", () => {
     if (packIndex < pack.length - 1) loadPackLevel(packIndex + 1);
-  });
-
-  loadLink.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const cfg = JSON.parse(String(reader.result));
-        loadCustomLevel(cfg);
-      } catch (err) {
-        alert("Không tải được level: " + err.message);
-      }
-    };
-    reader.onerror = () => alert("Không đọc được file.");
-    reader.readAsText(file);
-    fileInput.value = "";
   });
 
   let resizePending = false;
@@ -1088,7 +1111,7 @@ Date: 2026-08-11
     });
   });
 
-  levelLabelEl.textContent = "Đang tải bộ level…";
+  levelNumLabelEl.textContent = "…";
   (async () => {
     pack = await buildStarterPack();
     loadPackLevel(0);
