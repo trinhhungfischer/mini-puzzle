@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Nesting Boxes 3D: 3D evolution of nesting-blocks-concept.
+     2D shapes become upright prisms: square -> box, circle -> tube, triangle -> prism.
+     Because every piece is an upright prism, 3D collision = 2D footprint
+     collision (same SAT code as the 2D prototype) + a height interval. -->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Nesting Boxes 3D</title>
+<style>
+  :root { --bg: #f4efe6; --ink: #2b2b2b; --muted: #6b6b6b; --accent: #f2994a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; touch-action: none; }
+  #hud { position: fixed; top: 0; left: 0; right: 0; padding: 12px 16px; pointer-events: none; }
+  #title { font-weight: 700; font-size: 18px; }
+  #status { font-size: 14px; color: var(--muted); margin-top: 4px; }
+  #status .bad { color: #d64545; font-weight: 600; }
+  #hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; justify-content: center;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  #bar button, #win button { font: inherit; font-size: 16px; min-width: 48px; height: 44px; padding: 0 14px;
+    border: 0; border-radius: 12px; background: #fff; color: var(--ink);
+    box-shadow: 0 3px 0 #d8cfc0; cursor: pointer; }
+  #bar button:active, #win button:active { transform: translateY(2px); box-shadow: 0 1px 0 #d8cfc0; }
+  #win { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(244,239,230,.6); }
+  #win .card { background: #fff; border-radius: 16px; padding: 20px 24px; text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  #win h2 { margin: 0 0 12px; }
+  #win button { background: var(--accent); color: #fff; box-shadow: 0 3px 0 #c9742d; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="title">Level 1</div>
+  <div id="status"></div>
+  <div id="hint">Kéo để di chuyển · Chạm để xoay 90° · Đóng được nắp thùng cam là thắng</div>
+</div>
+<div id="bar">
+  <button id="prevBtn" title="Level trước">◀</button>
+  <button id="rotLBtn" title="Xoay góc nhìn">⟲</button>
+  <button id="resetBtn">Làm lại</button>
+  <button id="rotRBtn" title="Xoay góc nhìn">⟳</button>
+  <button id="nextBtn" title="Level sau">▶</button>
+</div>
+<div id="win"><div class="card"><h2>Đóng nắp thành công!</h2><button id="winNextBtn">Level tiếp</button></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+// ---------------------------------------------------------------------------
+// Coordinates: logic space is (x right, y depth, z up), 1 unit = one green.
+// Three.js space is (X = x, Y = z, Z = y). Every piece stores WORLD x/y/z/rot
+// (x,y = corner of its footprint bounding box, z = bottom, rot = 90deg steps
+// CCW). Parent/child is a logical relation recomputed after every move.
+// ---------------------------------------------------------------------------
+const EPS = 1e-6;
+const GRID = 0.5;          // drop snap
+const MAX_H = 6;           // tallest allowed stack
+const LIFT = 0.35;         // visual hover while dragging
+const RANK = { green: 0, blue: 1, bin: 2 };
+const COLORS = { green: 0x55b96a, blue: 0x3d7fe0, bin: 0xf2994a };
+
+// Levels. Pieces are indexed: blues first (in order), then greens expanded in
+// order. Solutions reference those indices and are replayed through the REAL
+// drop pipeline (DBG.applySolution) -- that is the solvability proof.
+// rel: index of a piece whose CURRENT origin the x/y are relative to (used to
+// nest into a container while it is still in the tray).
+const LEVELS = [
+  {
+    name: 'Hộp trong hộp',
+    bin: { sx: 4, sy: 2, h: 2 },
+    blues: ['box'],
+    greens: [{ shape: 'box', count: 12 }],
+    // Outside the blue there are only 8 slots (2x2 cells x 2 layers): 4+ cubes MUST nest.
+    solution: [
+      { p: 1, x: 0, y: 0, rel: 0 }, { p: 2, x: 1, y: 0, rel: 0 },
+      { p: 3, x: 0, y: 1, rel: 0 }, { p: 4, x: 1, y: 1, rel: 0 },
+      { p: 0, x: 0, y: 0 },
+      { p: 5, x: 2, y: 0 }, { p: 6, x: 3, y: 0 }, { p: 7, x: 2, y: 1 }, { p: 8, x: 3, y: 1 },
+      { p: 9, x: 2, y: 0 }, { p: 10, x: 3, y: 0 }, { p: 11, x: 2, y: 1 }, { p: 12, x: 3, y: 1 },
+    ],
+  },
+  {
+    name: 'Ống trong ống',
+    bin: { sx: 4, sy: 2, h: 2 },
+    blues: ['box', 'tube'],
+    greens: [{ shape: 'tube', count: 4 }, { shape: 'prism', count: 4 }, { shape: 'box', count: 6 }],
+    // Zero spare space: the tube container fits exactly 2 tubes per layer
+    // (centres 0.5 off-axis, touching), the box takes 6 cubes + 4 prisms.
+    solution: [
+      { p: 0, x: 0, y: 0 }, { p: 1, x: 2, y: 0 },
+      { p: 2, x: 2, y: 0.5 }, { p: 3, x: 3, y: 0.5 }, { p: 4, x: 2, y: 0.5 }, { p: 5, x: 3, y: 0.5 },
+      { p: 10, x: 0, y: 0 }, { p: 11, x: 1, y: 0 }, { p: 12, x: 0, y: 1 }, { p: 13, x: 1, y: 1 },
+      { p: 14, x: 0, y: 0 }, { p: 15, x: 1, y: 0 },
+      { p: 6, x: 0, y: 1, rot: 0 }, { p: 7, x: 0, y: 1, rot: 2 },
+      { p: 8, x: 1, y: 1, rot: 0 }, { p: 9, x: 1, y: 1, rot: 2 },
+    ],
+  },
+  {
+    name: 'Nửa tam giác',
+    bin: { sx: 4, sy: 2, h: 2 },
+    blues: ['box', 'prism'],
+    greens: [{ shape: 'tube', h: 2, count: 2 }, { shape: 'box', count: 6 }, { shape: 'prism', count: 12 }],
+    // The prism container leaves the opposite half-triangle of its 2x2 cell
+    // empty inside the bin; filling it needs prisms rotated 180deg.
+    solution: [
+      { p: 0, x: 0, y: 0 }, { p: 1, x: 2, y: 0, rot: 0 },
+      { p: 2, x: 0, y: 0 }, { p: 3, x: 1, y: 0 },
+      { p: 4, x: 0, y: 1 }, { p: 5, x: 1, y: 1 }, { p: 6, x: 0, y: 1 }, { p: 7, x: 1, y: 1 },
+      { p: 8, x: 2, y: 0 }, { p: 9, x: 2, y: 0 },
+      { p: 10, x: 3, y: 0, rot: 0 }, { p: 11, x: 2, y: 1, rot: 0 },
+      { p: 12, x: 3, y: 0, rot: 0 }, { p: 13, x: 2, y: 1, rot: 0 },
+      { p: 14, x: 3, y: 0, rot: 2 }, { p: 15, x: 2, y: 1, rot: 2 }, { p: 16, x: 3, y: 1, rot: 0 }, { p: 17, x: 3, y: 1, rot: 2 },
+      { p: 18, x: 3, y: 0, rot: 2 }, { p: 19, x: 2, y: 1, rot: 2 }, { p: 20, x: 3, y: 1, rot: 0 }, { p: 21, x: 3, y: 1, rot: 2 },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// 2D footprint geometry -- ported from nesting-blocks-concept (SAT + contains).
+// ---------------------------------------------------------------------------
+function rotatePt(px, py, cx, cy, steps) {
+  const rad = steps * Math.PI / 2, cos = Math.round(Math.cos(rad)), sin = Math.round(Math.sin(rad));
+  const dx = px - cx, dy = py - cy;
+  return [cx + dx*cos - dy*sin, cy + dx*sin + dy*cos];
+}
+
+// Unrotated footprint relative to the bounding-box corner.
+function motif(p) {
+  if (p.shape === 'prism') return [[0,0],[p.sx,0],[0,p.sy]];
+  return [[0,0],[p.sx,0],[p.sx,p.sy],[0,p.sy]];
+}
+
+function geomOf(p, x = p.x, y = p.y, rot = p.rot) {
+  if (p.shape === 'tube') return { kind: 'circle', cx: x + p.sx/2, cy: y + p.sy/2, r: p.sx/2 };
+  const cx = p.sx/2, cy = p.sy/2;
+  return { kind: 'poly', pts: motif(p).map(([px, py]) => {
+    const [rx, ry] = rotatePt(px, py, cx, cy, rot);
+    return [rx + x, ry + y];
+  }) };
+}
+
+function edgeNormals(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    const ex = b[0]-a[0], ey = b[1]-a[1], len = Math.hypot(ex, ey);
+    if (len > 1e-9) out.push({ x: -ey/len, y: ex/len });
+  }
+  return out;
+}
+function nearestVertexAxis(c, pts) {
+  let bx = 0, by = 0, best = Infinity;
+  for (const p of pts) { const dx = p[0]-c.cx, dy = p[1]-c.cy, d = dx*dx+dy*dy; if (d < best) { best = d; bx = dx; by = dy; } }
+  const len = Math.hypot(bx, by);
+  return len < 1e-9 ? null : { x: bx/len, y: by/len };
+}
+function project(s, ax) {
+  if (s.kind === 'circle') { const c = s.cx*ax.x + s.cy*ax.y; return { min: c - s.r, max: c + s.r }; }
+  let min = Infinity, max = -Infinity;
+  for (const p of s.pts) { const v = p[0]*ax.x + p[1]*ax.y; if (v < min) min = v; if (v > max) max = v; }
+  return { min, max };
+}
+// True only on genuine penetration; touching is allowed.
+function shapesOverlap(a, b) {
+  const axes = [];
+  if (a.kind === 'poly') axes.push(...edgeNormals(a.pts));
+  if (b.kind === 'poly') axes.push(...edgeNormals(b.pts));
+  if (a.kind === 'circle' && b.kind === 'poly') { const ax = nearestVertexAxis(a, b.pts); if (ax) axes.push(ax); }
+  if (b.kind === 'circle' && a.kind === 'poly') { const ax = nearestVertexAxis(b, a.pts); if (ax) axes.push(ax); }
+  if (a.kind === 'circle' && b.kind === 'circle') {
+    const dx = b.cx-a.cx, dy = b.cy-a.cy, len = Math.hypot(dx, dy);
+    if (len < 1e-9) return true;
+    axes.push({ x: dx/len, y: dy/len });
+  }
+  for (const ax of axes) {
+    const pa = project(a, ax), pb = project(b, ax);
+    if (Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min) <= EPS) return false;
+  }
+  return true;
+}
+function edgePlanes(pts) {
+  const cx = pts.reduce((s,p) => s+p[0], 0) / pts.length, cy = pts.reduce((s,p) => s+p[1], 0) / pts.length;
+  const planes = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    const ex = b[0]-a[0], ey = b[1]-a[1], len = Math.hypot(ex, ey);
+    if (len < 1e-9) continue;
+    let n = { x: -ey/len, y: ex/len }, d = n.x*a[0] + n.y*a[1];
+    if (n.x*cx + n.y*cy > d) { n = { x: -n.x, y: -n.y }; d = -d; }
+    planes.push({ n, d });
+  }
+  return planes;
+}
+function shapeContains(c, inner) {
+  const tol = 1e-6;
+  if (c.kind === 'poly') {
+    for (const { n, d } of edgePlanes(c.pts)) {
+      if (inner.kind === 'poly') { for (const p of inner.pts) if (n.x*p[0] + n.y*p[1] > d + tol) return false; }
+      else if (n.x*inner.cx + n.y*inner.cy + inner.r > d + tol) return false;
+    }
+    return true;
+  }
+  if (inner.kind === 'poly') return inner.pts.every(p => Math.hypot(p[0]-c.cx, p[1]-c.cy) <= c.r + tol);
+  return Math.hypot(inner.cx-c.cx, inner.cy-c.cy) + inner.r <= c.r + tol;
+}
+
+// ---------------------------------------------------------------------------
+// 3D rules: drop-from-above + gravity.
+// A container's walls have zero logical thickness. A lower-tier piece whose
+// footprint is fully inside a container's footprint falls past the walls to
+// its floor; anything else overlapping it rests on its rim.
+// ---------------------------------------------------------------------------
+let pieces = [], bin = null, levelIdx = 0, world = null;
+
+function supportTop(P, F, Q) {
+  const G = geomOf(Q);
+  if (!shapesOverlap(F, G)) return -Infinity;
+  if (Q.container && RANK[P.tier] < RANK[Q.tier] && shapeContains(G, F)) return Q.z;
+  return Q.z + Q.h;
+}
+
+// Height P would come to rest at if dropped from the sky at its current x/y/rot.
+function restZ(P, exclude) {
+  const F = geomOf(P);
+  let z = 0;
+  for (const Q of pieces) if (Q !== P && !exclude.has(Q)) z = Math.max(z, supportTop(P, F, Q));
+  return z;
+}
+
+function ancestors(p) { const out = []; for (let a = p.parent; a; a = a.parent) out.push(a); return out; }
+function descendants(p) { return pieces.filter(q => ancestors(q).includes(p)); }
+
+// Everything not excluded falls, bottom-up; a container drags its contents down with it.
+function settleAll(exclude = new Set()) {
+  const list = pieces.filter(p => p !== bin && !exclude.has(p))
+    // At equal height a container must settle before what is inside it --
+    // a freshly dropped piece has no parent yet, so depth alone can't order them.
+    .sort((a, b) => (a.z - b.z) || (RANK[b.tier] - RANK[a.tier]) || (ancestors(a).length - ancestors(b).length));
+  const done = [bin];
+  for (const P of list) {
+    const F = geomOf(P);
+    let z = 0;
+    for (const Q of done) z = Math.max(z, supportTop(P, F, Q));
+    const dz = z - P.z;
+    if (Math.abs(dz) > EPS) { P.z = z; for (const d of descendants(P)) if (!exclude.has(d)) d.z += dz; }
+    done.push(P);
+  }
+}
+
+// Parent = lowest-tier container whose footprint holds P and whose walls span P's bottom.
+function assignParents() {
+  for (const P of pieces) {
+    if (P === bin) continue;
+    const F = geomOf(P);
+    let best = null;
+    for (const C of pieces) {
+      if (C === P || !C.container || RANK[C.tier] <= RANK[P.tier]) continue;
+      if (!shapeContains(geomOf(C), F)) continue;
+      if (P.z < C.z - EPS || P.z > C.z + C.h - EPS) continue;
+      if (!best || RANK[C.tier] < RANK[best.tier] || (RANK[C.tier] === RANK[best.tier] && C.z > best.z)) best = C;
+    }
+    P.parent = best;
+  }
+}
+
+function snapshot() { return pieces.map(p => ({ p, x: p.x, y: p.y, z: p.z, rot: p.rot, parent: p.parent })); }
+function restore(s) { for (const r of s) Object.assign(r.p, { x: r.x, y: r.y, z: r.z, rot: r.rot, parent: r.parent }); }
+
+// Lift a piece (plus everything nested in it) out of the world; the rest settles.
+function beginLift(root) {
+  const snap = snapshot();
+  const group = [root, ...descendants(root)];
+  const groupSet = new Set(group);
+  const orig = new Map(group.map(p => [p, { x: p.x, y: p.y, z: p.z, rot: p.rot }]));
+  settleAll(groupSet);
+  return { root, group, groupSet, snap, orig };
+}
+
+// Move the lifted group so root's corner is at (x,y), rotated by extra 90deg steps around root's centre.
+function placeGroup(L, x, y, steps) {
+  const r0 = L.orig.get(L.root);
+  const c0x = r0.x + L.root.sx/2, c0y = r0.y + L.root.sy/2;
+  const c1x = x + L.root.sx/2, c1y = y + L.root.sy/2;
+  for (const p of L.group) {
+    const o = L.orig.get(p);
+    const [mx, my] = rotatePt(o.x + p.sx/2, o.y + p.sy/2, c0x, c0y, steps);
+    p.x = mx - c0x + c1x - p.sx/2;
+    p.y = my - c0y + c1y - p.sy/2;
+    p.rot = (o.rot + steps) % 4;
+  }
+  const rest = restZ(L.root, L.groupSet);
+  for (const p of L.group) p.z = L.orig.get(p).z + (rest - r0.z);
+  return { rest, valid: inWorld(L.root) && rest + L.root.h <= MAX_H + EPS };
+}
+
+function inWorld(p) {
+  const g = geomOf(p);
+  const pts = g.kind === 'circle' ? [[g.cx-g.r, g.cy-g.r], [g.cx+g.r, g.cy+g.r]] : g.pts;
+  return pts.every(([px, py]) => px >= world.x0 - EPS && px <= world.x1 + EPS && py >= world.y0 - EPS && py <= world.y1 + EPS);
+}
+
+function commitLift() { settleAll(); assignParents(); }
+function cancelLift(L) { restore(L.snap); }
+
+// The one move pipeline shared by pointer input and DBG. rot = absolute target rotation.
+function tryMove(p, x, y, rot = p.rot) {
+  const L = beginLift(p);
+  const { valid } = placeGroup(L, x, y, ((rot - p.rot) % 4 + 4) % 4);
+  if (valid) commitLift(); else cancelLift(L);
+  syncAll();
+  updateStatus();
+  return valid;
+}
+
+function checkWin() {
+  const B = geomOf(bin), outside = [], over = [];
+  for (const p of pieces) {
+    if (p === bin) continue;
+    if (!shapeContains(B, geomOf(p))) outside.push(p.id);
+    else if (p.z + p.h > bin.h + EPS) over.push(p.id);
+  }
+  return { won: outside.length === 0 && over.length === 0, outside, over };
+}
+
+// ---------------------------------------------------------------------------
+// Level setup
+// ---------------------------------------------------------------------------
+function makePiece(tier, shape, size, h) {
+  return { id: pieces.length, tier, shape, sx: size, sy: size, h, x: 0, y: 0, z: 0, rot: 0,
+    parent: null, container: tier !== 'green' };
+}
+
+function buildLevel(i) {
+  levelIdx = (i + LEVELS.length) % LEVELS.length;
+  const L = LEVELS[levelIdx];
+  for (const p of pieces) if (p.mesh) scene.remove(p.mesh);
+  pieces = [];
+  for (const s of L.blues) pieces.push(makePiece('blue', s, 2, 2));
+  for (const g of L.greens) for (let k = 0; k < g.count; k++) pieces.push(makePiece('green', g.shape, 1, g.h || 1));
+  bin = { id: 'bin', tier: 'bin', shape: 'box', sx: L.bin.sx, sy: L.bin.sy, h: L.bin.h,
+    x: 0, y: 0, z: 0, rot: 0, parent: null, container: true };
+  pieces.push(bin);
+  const half = 6;
+  world = { x0: L.bin.sx/2 - half, x1: L.bin.sx/2 + half, y0: L.bin.sy/2 - half, y1: L.bin.sy/2 + half };
+  layoutTray();
+  for (const p of pieces) buildMesh(p);
+  buildGround();
+  fitCamera();
+  syncAll();
+  updateStatus();
+  document.getElementById('title').textContent = `Level ${levelIdx + 1}: ${L.name}`;
+  document.getElementById('win').style.display = 'none';
+}
+
+// Scatter pieces on the ground around the bin, nearest-first, with gaps.
+function layoutTray() {
+  const placed = [];
+  const binR = { x0: -1, y0: -1, x1: bin.sx + 1, y1: bin.sy + 1 };
+  const hit = (a, b) => a.x0 < b.x1 - EPS && b.x0 < a.x1 - EPS && a.y0 < b.y1 - EPS && b.y0 < a.y1 - EPS;
+  const bcx = bin.sx/2, bcy = bin.sy/2;
+  for (const p of pieces) {
+    if (p === bin) continue;
+    const cands = [];
+    for (let y = world.y0 + 0.5; y + p.sy <= world.y1 - 0.5; y += GRID)
+      for (let x = world.x0 + 0.5; x + p.sx <= world.x1 - 0.5; x += GRID)
+        cands.push({ x, y, d: Math.hypot(x + p.sx/2 - bcx, (y + p.sy/2 - bcy) * 1.3) });
+    cands.sort((a, b) => a.d - b.d);
+    for (const c of cands) {
+      const r = { x0: c.x - 0.5, y0: c.y - 0.5, x1: c.x + p.sx + 0.5, y1: c.y + p.sy + 0.5 };
+      if (hit(r, binR) || placed.some(q => hit(r, q))) continue;
+      p.x = c.x; p.y = c.y;
+      placed.push({ x0: c.x, y0: c.y, x1: c.x + p.sx, y1: c.y + p.sy });
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering (Three.js r128)
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf4efe6);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8a98f, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+sun.position.set(6, 14, 3);
+scene.add(sun);
+let viewStep = 0, groundObj = null, marker = null;
+
+function vec2s(pts) { return pts.map(p => new THREE.Vector2(p[0], p[1])); }
+function extrudeUp(shape, depth) {
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 48 });
+  g.rotateX(Math.PI / 2);      // shape (x,y) -> three (x, -d, y)
+  g.translate(0, depth, 0);    // occupy Y in [0, depth]
+  return g;
+}
+function offsetPoly(pts, t) {
+  const pl = edgePlanes(pts), n = pl.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = pl[(i - 1 + n) % n], b = pl[i];
+    const d1 = a.d + t, d2 = b.d + t, det = a.n.x*b.n.y - a.n.y*b.n.x;
+    out.push([(d1*b.n.y - a.n.y*d2) / det, (a.n.x*d2 - d1*b.n.x) / det]);
+  }
+  return out;
+}
+function localPts(p) { return motif(p).map(([x, y]) => [x - p.sx/2, y - p.sy/2]); }
+
+function buildMesh(p) {
+  const grp = new THREE.Group();
+  const color = COLORS[p.tier];
+  p.mats = [];
+  p.edgeMats = [];
+  const add = (geom, opts, pickable = true, edges = true) => {
+    const mat = new THREE.MeshLambertMaterial(Object.assign({ color }, opts));
+    const m = new THREE.Mesh(geom, mat);
+    if (pickable && p !== bin) m.userData.piece = p;
+    grp.add(m);
+    p.mats.push(mat);
+    if (edges) {
+      const em = new THREE.LineBasicMaterial({ color: 0x2b2b2b, transparent: true, opacity: 0.55 });
+      grp.add(new THREE.LineSegments(new THREE.EdgesGeometry(geom, 30), em));
+      p.edgeMats.push(em);
+    }
+  };
+  const wallT = p === bin ? 0.08 : 0.05;
+  if (!p.container) {
+    if (p.shape === 'tube') {
+      const g = new THREE.CylinderGeometry(p.sx/2, p.sx/2, p.h, 40);
+      g.translate(0, p.h/2, 0);
+      add(g, {});
+    } else {
+      add(extrudeUp(new THREE.Shape(vec2s(localPts(p))), p.h), {});
+    }
+  } else {
+    let outer, hole, floor;
+    if (p.shape === 'tube') {
+      const r = p.sx/2;
+      outer = new THREE.Shape(); outer.absarc(0, 0, r + wallT, 0, Math.PI*2, false);
+      hole = new THREE.Path(); hole.absarc(0, 0, r, 0, Math.PI*2, true);
+      floor = new THREE.Shape(); floor.absarc(0, 0, r + wallT, 0, Math.PI*2, false);
+    } else {
+      const lp = localPts(p);
+      outer = new THREE.Shape(vec2s(offsetPoly(lp, wallT)));
+      hole = new THREE.Path(vec2s(lp.slice().reverse()));
+      floor = new THREE.Shape(vec2s(offsetPoly(lp, wallT)));
+    }
+    outer.holes.push(hole);
+    const isBin = p === bin;
+    add(extrudeUp(outer, p.h), { transparent: true, opacity: isBin ? 0.28 : 0.55, depthWrite: false });
+    const fg = extrudeUp(floor, 0.05);
+    fg.translate(0, -0.05, 0);
+    add(fg, { transparent: isBin, opacity: isBin ? 0.5 : 1 }, true, !isBin);
+  }
+  p.mesh = grp;
+  scene.add(grp);
+}
+
+function buildGround() {
+  if (groundObj) scene.remove(groundObj);
+  groundObj = new THREE.Group();
+  const w = world.x1 - world.x0, d = world.y1 - world.y0;
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshLambertMaterial({ color: 0xe9e1d3 }));
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.set(world.x0 + w/2, -0.06, world.y0 + d/2);
+  groundObj.add(plane);
+  const pts = [];
+  for (let x = world.x0; x <= world.x1 + EPS; x += 1) pts.push(x, -0.055, world.y0, x, -0.055, world.y1);
+  for (let y = world.y0; y <= world.y1 + EPS; y += 1) pts.push(world.x0, -0.055, y, world.x1, -0.055, y);
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  groundObj.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color: 0xd6ccba })));
+  scene.add(groundObj);
+}
+
+function syncAll(lifted = null, invalid = false) {
+  const res = checkWin();
+  const overSet = new Set(res.over);
+  for (const p of pieces) {
+    const up = lifted && lifted.has(p) ? LIFT : 0;
+    p.mesh.position.set(p.x + p.sx/2, p.z + up, p.y + p.sy/2);
+    p.mesh.rotation.y = -p.rot * Math.PI / 2;
+    const tint = lifted && lifted.has(p) && invalid ? 0x661111 : 0x000000;
+    for (const m of p.mats) m.emissive.setHex(tint);
+    for (const m of p.edgeMats) {
+      m.color.setHex(overSet.has(p.id) ? 0xd64545 : 0x2b2b2b);
+      m.opacity = overSet.has(p.id) ? 1 : 0.55;
+    }
+  }
+}
+
+function showMarker(p, z, valid) {
+  hideMarker();
+  const g = geomOf(p);
+  let geom;
+  if (g.kind === 'circle') { geom = new THREE.CircleGeometry(g.r, 40); geom.translate(g.cx, g.cy, 0); }
+  else geom = new THREE.ShapeGeometry(new THREE.Shape(vec2s(g.pts)));
+  geom.rotateX(Math.PI / 2);   // (x,y,0) -> (x,0,y)
+  marker = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+    color: valid ? 0x2b2b2b : 0xd64545, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+  marker.position.y = z + 0.01;
+  scene.add(marker);
+}
+function hideMarker() { if (marker) { scene.remove(marker); marker = null; } }
+
+function fitCamera() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  const cx = (world.x0 + world.x1) / 2, cy = (world.y0 + world.y1) / 2;
+  const ang = Math.PI/4 + viewStep * Math.PI/2, elev = 0.62, dist = 40;
+  camera.position.set(cx + Math.cos(ang)*Math.cos(elev)*dist, Math.sin(elev)*dist, cy + Math.sin(ang)*Math.cos(elev)*dist);
+  camera.lookAt(cx, 0, cy);
+  camera.updateMatrixWorld();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const x of [world.x0, world.x1]) for (const y of [world.y0, world.y1]) for (const z of [0, 2.5]) {
+    const v = new THREE.Vector3(x, z, y).applyMatrix4(camera.matrixWorldInverse);
+    minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x); minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+  }
+  // Leave room for the HUD (top) and button bar (bottom).
+  const padTop = 90 / h, padBot = 80 / h;
+  let vw = (maxX - minX) * 1.04, vh = (maxY - minY) * 1.04 / (1 - padTop - padBot);
+  if (vw / vh < w / h) vw = vh * w / h; else vh = vw * h / w;
+  const mx = (minX + maxX) / 2, my = (minY + maxY) / 2 + vh * (padTop - padBot) / 2;
+  Object.assign(camera, { left: mx - vw/2, right: mx + vw/2, top: my + vh/2, bottom: my - vh/2 });
+  camera.updateProjectionMatrix();
+}
+
+function updateStatus() {
+  const r = checkWin();
+  const total = pieces.length - 1;
+  let s = `${total - r.outside.length}/${total} khối trong thùng`;
+  if (r.over.length) s += ` · <span class="bad">${r.over.length} khối nhô quá miệng thùng</span>`;
+  document.getElementById('status').innerHTML = s;
+  document.getElementById('win').style.display = r.won ? 'flex' : 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Input: drag = move (snaps to 0.5 grid, drops from above), tap = rotate 90deg.
+// ---------------------------------------------------------------------------
+const ray = new THREE.Raycaster();
+let ptr = null;
+
+function ndc(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+}
+function hitPlane(e, height) {
+  ray.setFromCamera(ndc(e), camera);
+  const out = new THREE.Vector3();
+  return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -height), out) ? out : null;
+}
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (ptr) return;
+  ray.setFromCamera(ndc(e), camera);
+  const hits = ray.intersectObjects(scene.children, true).filter(h => h.object.userData.piece);
+  if (!hits.length) return;
+  const piece = hits[0].object.userData.piece;
+  renderer.domElement.setPointerCapture(e.pointerId);
+  ptr = { id: e.pointerId, piece, sx: e.clientX, sy: e.clientY, lift: null, plan: null };
+});
+
+renderer.domElement.addEventListener('pointermove', e => {
+  if (!ptr || e.pointerId !== ptr.id) return;
+  if (!ptr.lift) {
+    if (Math.hypot(e.clientX - ptr.sx, e.clientY - ptr.sy) < 8) return;
+    ptr.lift = beginLift(ptr.piece);
+    const h = hitPlane(e, ptr.piece.z);
+    ptr.ox = ptr.piece.x - h.x; ptr.oy = ptr.piece.y - h.z; ptr.h = ptr.piece.z;
+  }
+  const h = hitPlane(e, ptr.h);
+  if (!h) return;
+  const x = Math.round((h.x + ptr.ox) / GRID) * GRID, y = Math.round((h.z + ptr.oy) / GRID) * GRID;
+  ptr.plan = placeGroup(ptr.lift, x, y, 0);
+  syncAll(ptr.lift.groupSet, !ptr.plan.valid);
+  showMarker(ptr.piece, ptr.plan.rest, ptr.plan.valid);
+});
+
+function endPointer(e, cancelled) {
+  if (!ptr || e.pointerId !== ptr.id) return;
+  const P = ptr;
+  ptr = null;
+  hideMarker();
+  if (P.lift) {
+    if (!cancelled && P.plan && P.plan.valid) commitLift(); else cancelLift(P.lift);
+    syncAll();
+    updateStatus();
+  } else if (!cancelled) {
+    tryMove(P.piece, P.piece.x, P.piece.y, (P.piece.rot + 1) % 4);   // tap = rotate in place
+  }
+}
+renderer.domElement.addEventListener('pointerup', e => endPointer(e, false));
+renderer.domElement.addEventListener('pointercancel', e => endPointer(e, true));
+
+document.getElementById('prevBtn').onclick = () => buildLevel(levelIdx - 1);
+document.getElementById('nextBtn').onclick = () => buildLevel(levelIdx + 1);
+document.getElementById('winNextBtn').onclick = () => buildLevel(levelIdx + 1);
+document.getElementById('resetBtn').onclick = () => buildLevel(levelIdx);
+document.getElementById('rotLBtn').onclick = () => { viewStep = (viewStep + 3) % 4; fitCamera(); };
+document.getElementById('rotRBtn').onclick = () => { viewStep = (viewStep + 1) % 4; fitCamera(); };
+window.addEventListener('resize', fitCamera);
+
+(function loop() { renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+// ---------------------------------------------------------------------------
+// Debug / verification. Everything goes through tryMove() = the real pipeline.
+// ---------------------------------------------------------------------------
+function applySolution(stopBeforeRoot = false) {
+  const failed = [];
+  for (const st of LEVELS[levelIdx].solution) {
+    if (stopBeforeRoot && st.rel === undefined) break;
+    const p = pieces[st.p];
+    const base = st.rel !== undefined ? pieces[st.rel] : { x: 0, y: 0 };
+    if (!tryMove(p, base.x + st.x, base.y + st.y, st.rot !== undefined ? st.rot : p.rot)) failed.push(st);
+  }
+  return { failed, ...checkWin() };
+}
+
+window.DBG = {
+  get pieces() { return pieces; }, get bin() { return bin; },
+  load: buildLevel, tryMove, checkWin, applySolution, geomOf, shapesOverlap, shapeContains,
+  state: () => pieces.filter(p => p !== bin).map(p => ({ id: p.id, tier: p.tier, shape: p.shape,
+    x: p.x, y: p.y, z: p.z, rot: p.rot, parent: p.parent ? p.parent.id : null })),
+  view(k) { viewStep = k % 4; fitCamera(); },
+};
+
+const qs = new URLSearchParams(location.search);
+buildLevel((parseInt(qs.get('level'), 10) || 1) - 1);
+if (qs.get('view')) DBG.view(parseInt(qs.get('view'), 10));
+if (qs.get('scenario') === 'solved') applySolution();
+if (qs.get('scenario') === 'nest') applySolution(true);
+</script>
+</body>
+</html>

@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Sunroot Directives — Prototype v4</title>
+<!--
+PROTOTYPE - NOT FOR PRODUCTION
+Question: Does scheduling automation tools on a timeline against a blurred
+ghost preview, then committing to grow a tree to match a target silhouette,
+feel like reasoning rather than guessing?
+Date: 2026-08-27
+v4 — single-stage UI: every interaction happens on one board. Tools are
+dragged from a dock onto the board (drag a placed tool off the board to
+remove it); the timeline is a slider that both picks the cycle you're
+editing and scrubs the tree's growth up to that cycle.
+Core growth/fork/scoring logic unchanged from v2/v3 (already verified).
+-->
+<style>
+  :root {
+    --bg: #fbf4f7;
+    --panel: #ffffff;
+    --mint: #b8e5cd;
+    --mint-deep: #6fbf8f;
+    --peach: #ffd6c0;
+    --lavender: #e6dcf8;
+    --lav-deep: #a173c2;
+    --ink: #453a4d;
+    --muted: #8d8296;
+    --line: #efe6f0;
+    --good: #57ac7d;
+    --mid: #d9a13f;
+    --bad: #d4707a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(circle at 20% 0%, #fdf0f6 0%, var(--bg) 45%, #f2f7f4 100%);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 18px 14px 36px;
+    font-size: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    -webkit-user-select: none; user-select: none;
+  }
+  .masthead { text-align: center; margin-bottom: 14px; }
+  .masthead h1 { font-size: 1.35rem; margin: 0 0 3px 0; }
+  .masthead p { color: var(--muted); font-size: 0.86rem; margin: 0; }
+
+  /* ---------- the single stage: everything lives here ---------- */
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 820px;
+    background: var(--panel);
+    border-radius: 26px;
+    padding: 16px;
+    box-shadow: 0 8px 28px rgba(69, 58, 77, 0.09);
+  }
+
+  .stage-top {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 12px; margin-bottom: 12px;
+  }
+  .stage-top h2 { font-size: 1.02rem; margin: 0 0 4px 0; }
+  .stage-top .hint { font-size: 0.82rem; color: var(--muted); line-height: 1.5; max-width: 560px; }
+  .nav-btns { flex: 0 0 auto; }
+  .nav-btns button {
+    border: none; background: var(--lavender); color: var(--ink);
+    border-radius: 11px; padding: 7px 12px; cursor: pointer;
+    font-size: 0.84rem; font-weight: 700; margin-left: 5px;
+  }
+  .nav-btns button:hover { filter: brightness(0.95); }
+
+  .board-wrap { position: relative; }
+  canvas#board {
+    background: linear-gradient(175deg, #fdf8ff 0%, #f4fbf6 60%, #eef7f1 100%);
+    border-radius: 20px;
+    display: block;
+    width: 100%;
+    border: 1px solid var(--line);
+    touch-action: none;
+  }
+  canvas#board.dropping { border-color: var(--lav-deep); }
+
+  /* tool dock — floats on the board itself */
+  .dock {
+    position: absolute; left: 12px; top: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    background: rgba(255,255,255,0.88);
+    backdrop-filter: blur(4px);
+    border: 1px solid var(--line);
+    border-radius: 18px; padding: 10px;
+  }
+  .dock-label {
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); font-weight: 800; text-align: center; margin-bottom: -2px;
+  }
+  .dock-item {
+    width: 60px; border-radius: 13px; padding: 5px 3px 6px;
+    background: #fff; border: 2px solid var(--line);
+    cursor: grab; display: flex; flex-direction: column; align-items: center;
+    transition: transform 0.12s ease, border-color 0.12s ease;
+  }
+  .dock-item:hover { transform: translateY(-2px); border-color: var(--lav-deep); }
+  .dock-item:active { cursor: grabbing; }
+  .dock-item .nm { font-size: 0.66rem; font-weight: 700; margin-top: 1px; }
+  .dock-item.disabled { opacity: 0.38; pointer-events: none; }
+
+  /* result badge floats top-right of the board */
+  .badge {
+    position: absolute; right: 12px; top: 12px;
+    background: rgba(255,255,255,0.92); backdrop-filter: blur(4px);
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 10px 14px; text-align: right; min-width: 128px;
+  }
+  .badge .match { font-size: 1.5rem; font-weight: 800; line-height: 1.05; }
+  .badge .stars { font-size: 1.05rem; letter-spacing: 2px; }
+  .badge .note { font-size: 0.72rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+  .badge .idle { font-size: 0.78rem; color: var(--muted); }
+
+  /* trash zone appears while dragging a placed tool */
+  .trash {
+    position: absolute; right: 14px; bottom: 14px;
+    background: #fde8e8; color: #8c4048; border: 2px dashed #e2a2a2;
+    border-radius: 16px; padding: 10px 16px; font-size: 0.82rem; font-weight: 700;
+    display: none;
+  }
+  .trash.show { display: block; }
+  .trash.hot { background: #f9d0d0; border-style: solid; }
+
+  /* toast message on the board */
+  .toast {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: 14px; background: rgba(69,58,77,0.92); color: #fff;
+    border-radius: 12px; padding: 9px 15px; font-size: 0.82rem;
+    display: none; max-width: 80%; line-height: 1.4;
+  }
+  .toast.show { display: block; }
+  .toast.warn { background: #b8505f; }
+
+  /* ---------- timeline slider ---------- */
+  .timeline-bar { margin-top: 14px; }
+  .tl-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; gap: 10px;
+  }
+  .tl-head .lbl {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 800;
+  }
+  .tl-head .cur { font-size: 0.86rem; font-weight: 700; }
+  .tl-head .cur b { color: var(--lav-deep); }
+
+  .tl-track {
+    position: relative; height: 62px; border-radius: 16px;
+    background: #f7f3fa; border: 1px solid var(--line);
+    display: flex; align-items: stretch; padding: 5px; gap: 5px;
+    touch-action: none;
+  }
+  .tl-cell {
+    flex: 1; border-radius: 11px; background: #fff;
+    border: 2px solid var(--line); cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0; position: relative; transition: all 0.12s ease; min-width: 0;
+  }
+  .tl-cell:hover { border-color: var(--lav-deep); }
+  .tl-cell.current { border-color: var(--lav-deep); background: #f5edfb; box-shadow: 0 0 0 3px rgba(161,115,194,0.18); }
+  .tl-cell.past { background: #f3faf6; }
+  .tl-cell .n { font-size: 0.6rem; color: var(--muted); font-weight: 700; }
+  .tl-cell.current .n { color: var(--lav-deep); }
+  .tl-cell .icons { display: flex; gap: 1px; align-items: center; justify-content: center; }
+
+  .tl-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    border: none; border-radius: 14px; padding: 11px 20px;
+    cursor: pointer; font-size: 0.92rem; font-weight: 700;
+  }
+  .btn-primary { background: var(--mint); color: #2c5c42; }
+  .btn-ghost { background: #f4eff7; color: var(--muted); }
+  .btn:hover { filter: brightness(0.95); }
+  .tl-actions .tip { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+
+  /* floating drag ghost */
+  .drag-ghost {
+    position: fixed; pointer-events: none; z-index: 999;
+    transform: translate(-50%, -50%); display: none;
+    filter: drop-shadow(0 4px 8px rgba(69,58,77,0.25));
+  }
+  .drag-ghost.show { display: block; }
+
+  .legend {
+    display: flex; gap: 16px; font-size: 0.76rem; color: var(--muted);
+    flex-wrap: wrap; margin-top: 12px; justify-content: center;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw-dash { width: 18px; height: 0; border-top: 2.5px dashed #b9aec2; }
+  .sw-ghost { width: 18px; height: 5px; border-radius: 3px; background: rgba(111,191,143,0.5); filter: blur(1px); }
+  .sw-solid { width: 18px; height: 0; border-top: 3.5px solid #7a5c46; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>🌱 Sunroot Directives</h1>
+  <p>Kéo công cụ từ dock thả lên board · trượt timeline để chọn chu kỳ và xem cây mọc dần</p>
+</div>
+
+<div class="stage">
+
+  <div class="stage-top">
+    <div>
+      <h2 id="levelName">Level 1</h2>
+      <div class="hint" id="levelHint"></div>
+    </div>
+    <div class="nav-btns">
+      <button id="prevBtn">‹ Trước</button>
+      <button id="nextBtn">Sau ›</button>
+    </div>
+  </div>
+
+  <div class="board-wrap">
+    <canvas id="board" width="792" height="500"></canvas>
+
+    <div class="dock" id="dock">
+      <div class="dock-label">Kéo thả</div>
+    </div>
+
+    <div class="badge" id="badge"><span class="idle">Chưa chạy</span></div>
+    <div class="trash" id="trash">🗑 Thả để xoá</div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <div class="timeline-bar">
+    <div class="tl-head">
+      <span class="lbl">Timeline — trượt để chọn chu kỳ</span>
+      <span class="cur">Chu kỳ <b id="curTick">1</b> / <span id="maxTick">5</span></span>
+    </div>
+    <div class="tl-track" id="tlTrack"></div>
+    <div class="tl-actions">
+      <button class="btn btn-primary" id="growBtn">🌿 Grow</button>
+      <button class="btn btn-ghost" id="resetBtn">↺ Làm lại</button>
+      <span class="tip" id="tlTip"></span>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw-dash"></span> Mẫu mục tiêu</span>
+    <span><span class="sw-ghost"></span> Ghost preview</span>
+    <span><span class="sw-solid"></span> Kết quả thật</span>
+  </div>
+</div>
+
+<canvas class="drag-ghost" id="dragGhost" width="70" height="70"></canvas>
+
+<script>
+// ================= CORE LOGIC (unchanged — verified in v2/v3) =================
+const TOOLS = {
+  light:  { label: 'Đèn', desc: 'Kéo ngọn về phía đèn', color: '#f5c451', needsPos: true },
+  shears: { label: 'Kéo tỉa', desc: 'Đẩy ngọn ra xa', color: '#e88ba0', needsPos: true },
+  water:  { label: 'Nước', desc: 'Mọc dài gấp đôi', color: '#7cc3e8', needsPos: false },
+  fork:   { label: 'Chẻ nhánh', desc: 'Tách 2 nhánh', color: '#b98fd4', needsPos: true }
+};
+const BASE_STEP = 30, MAX_TURN = 25, FORK_SPREAD_CAP = 60, GRID_SIZE = 20;
+function snapToGrid(v) { return Math.round(v / GRID_SIZE) * GRID_SIZE; }
+
+const LEVELS = [
+  {
+    name: 'Level 1 — Đặt vị trí Đèn',
+    hint: 'Trượt timeline tới chu kỳ muốn tác động, rồi kéo Đèn thả lên board. Ngọn cây sẽ nghiêng về phía đèn, tối đa 25° mỗi chu kỳ.',
+    ticks: 5, allowed: ['light'],
+    target: { schedule: [null, { tool: 'light', pos: { x: 140, y: -60 } }, { tool: 'light', pos: { x: 140, y: -60 } }, null, null], children: [] }
+  },
+  {
+    name: 'Level 2 — Cú bứt tốc',
+    hint: 'Nước làm đoạn mọc dài gấp đôi ở chu kỳ đó nhưng không đổi hướng. Kết hợp với Đèn để vươn xa.',
+    ticks: 6, allowed: ['light', 'water'],
+    target: { schedule: [null, { tool: 'water' }, { tool: 'light', pos: { x: -120, y: -80 } }, null, { tool: 'water' }, null], children: [] }
+  },
+  {
+    name: 'Level 3 — Đẩy ra bằng Kéo tỉa',
+    hint: 'Kéo tỉa làm ngược Đèn: đẩy ngọn RA XA điểm bạn thả, cùng biên độ 25°.',
+    ticks: 6, allowed: ['light', 'shears'],
+    target: { schedule: [{ tool: 'light', pos: { x: 100, y: -140 } }, null, { tool: 'shears', pos: { x: -60, y: -20 } }, null, null, null], children: [] }
+  },
+  {
+    name: 'Level 4 — Chẻ nhánh',
+    hint: 'Chẻ nhánh tách cây làm hai, hướng chẻ do vị trí bạn thả quyết định. Khi có nhiều nhánh, công cụ được gán cho nhánh gần chỗ thả nhất — và chỉ MỘT nhánh được dùng Đèn ở cùng một chu kỳ.',
+    ticks: 7, allowed: ['light', 'water', 'shears', 'fork'],
+    target: {
+      schedule: [null, { tool: 'water' }, { tool: 'fork', pos: { x: -100, y: -60 } }],
+      children: [
+        { schedule: [{ tool: 'light', pos: { x: -140, y: -160 } }, null, null, null], children: [] },
+        { schedule: [null, { tool: 'shears', pos: { x: 80, y: -40 } }, null, null], children: [] }
+      ]
+    }
+  },
+  {
+    name: 'Level 5 — Chẻ nhánh đệ quy',
+    hint: 'Nhánh con cũng chẻ tiếp được. 9 chu kỳ, 3 ngọn — màn khó nhất.',
+    ticks: 9, allowed: ['light', 'water', 'shears', 'fork'],
+    target: {
+      schedule: [null, { tool: 'fork', pos: { x: 120, y: -80 } }],
+      children: [
+        {
+          schedule: [{ tool: 'water' }, null, { tool: 'fork', pos: { x: 180, y: -100 } }],
+          children: [
+            { schedule: [null, null, { tool: 'light', pos: { x: 220, y: -140 } }, null], children: [] },
+            { schedule: [{ tool: 'shears', pos: { x: 60, y: -20 } }, null, null, null], children: [] }
+          ]
+        },
+        { schedule: [null, { tool: 'light', pos: { x: -160, y: -60 } }, null, { tool: 'water' }, null, null, { tool: 'shears', pos: { x: -40, y: -100 } }], children: [] }
+      ]
+    }
+  }
+];
+
+let branchMap = {}, nextBranchId = 0, rootId = null;
+let levelIndex = 0, committed = false, lastResult = null;
+let lastTransform = null;
+let currentTick = 1;            // 1-based cycle the slider is on
+let drag = null;                // { tool, isNew, branchId, idx, clientX, clientY, overBoard, simX, simY }
+
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+function createBranch(parentId, fullLength) {
+  const id = 'b' + (nextBranchId++);
+  branchMap[id] = { id, parentId, fullLength, forkAt: null, schedule: new Array(fullLength).fill(null), childIds: [] };
+  return id;
+}
+function resetTree(T) { branchMap = {}; nextBranchId = 0; rootId = createBranch(null, T); }
+function activeLen(b) { return b.forkAt === null ? b.fullLength : b.forkAt + 1; }
+function labelFor(id) {
+  const b = branchMap[id];
+  if (!b.parentId) return 'Thân';
+  const parent = branchMap[b.parentId];
+  return labelFor(b.parentId) + (parent.childIds.indexOf(id) === 0 ? '→T' : '→P');
+}
+function collectRows(id, rows) { rows.push(id); branchMap[id].childIds.forEach((c) => collectRows(c, rows)); return rows; }
+function removeBranchRec(id) { branchMap[id].childIds.forEach(removeBranchRec); delete branchMap[id]; }
+function clearSlot(branchId, idx) {
+  const b = branchMap[branchId];
+  const entry = b.schedule[idx];
+  if (entry && entry.tool === 'fork') { b.childIds.forEach(removeBranchRec); b.childIds = []; b.forkAt = null; }
+  b.schedule[idx] = null;
+}
+function doFork(branchId, idx, pos) {
+  const b = branchMap[branchId];
+  b.schedule[idx] = { tool: 'fork', pos };
+  b.forkAt = idx;
+  const remaining = b.fullLength - (idx + 1);
+  b.childIds = [createBranch(branchId, remaining), createBranch(branchId, remaining)];
+}
+function computeOffsets() {
+  const offsets = {};
+  (function rec(id, off) {
+    offsets[id] = off;
+    const b = branchMap[id];
+    if (b.childIds.length) { const c = off + activeLen(b); b.childIds.forEach((k) => rec(k, c)); }
+  })(rootId, 0);
+  return offsets;
+}
+function isLightFree(branchId, idx, offsets) {
+  const target = offsets[branchId] + idx;
+  for (const id in branchMap) {
+    if (id === branchId) continue;
+    const b = branchMap[id], off = offsets[id];
+    for (let j = 0; j < activeLen(b); j++) {
+      if (off + j === target && b.schedule[j] && b.schedule[j].tool === 'light') return false;
+    }
+  }
+  return true;
+}
+// carries the branch id so rendered segments can be mapped back to a branch
+function liveView(id) {
+  const b = branchMap[id];
+  return { id, schedule: b.schedule.slice(0, activeLen(b)), children: b.childIds.map(liveView) };
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function angleFromTo(from, to) { return Math.atan2(to.x - from.x, -(to.y - from.y)) * 180 / Math.PI; }
+function shortestAngleDiff(a, b) { let d = (a - b) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; }
+function applyTick(pos, angle, entry) {
+  let newAngle = angle, stepLen = BASE_STEP;
+  if (entry) {
+    if (entry.tool === 'water') stepLen = BASE_STEP * 2;
+    else if (entry.tool === 'light') newAngle = angle + clamp(shortestAngleDiff(angleFromTo(pos, entry.pos), angle), -MAX_TURN, MAX_TURN);
+    else if (entry.tool === 'shears') newAngle = angle - clamp(shortestAngleDiff(angleFromTo(pos, entry.pos), angle), -MAX_TURN, MAX_TURN);
+  }
+  const rad = newAngle * Math.PI / 180;
+  return { pos: { x: pos.x + Math.sin(rad) * stepLen, y: pos.y - Math.cos(rad) * stepLen }, angle: newAngle };
+}
+function growPoints(node, pos, angle, startTick) {
+  startTick = startTick || 0;
+  let curPos = { x: pos.x, y: pos.y }, curAngle = angle;
+  const points = [{ x: curPos.x, y: curPos.y }];
+  for (let i = 0; i < node.schedule.length; i++) {
+    const entry = node.schedule[i];
+    const r = applyTick(curPos, curAngle, entry);
+    curPos = r.pos; curAngle = r.angle;
+    points.push({ x: curPos.x, y: curPos.y });
+    if (entry && entry.tool === 'fork' && node.children && node.children.length === 2) {
+      const delta = clamp(shortestAngleDiff(angleFromTo(curPos, entry.pos), curAngle), -FORK_SPREAD_CAP, FORK_SPREAD_CAP);
+      const nt = startTick + i + 1;
+      return {
+        id: node.id, points, startTick,
+        subtrees: [growPoints(node.children[0], curPos, curAngle + delta, nt), growPoints(node.children[1], curPos, curAngle - delta, nt)]
+      };
+    }
+  }
+  return { id: node.id, points, startTick, subtrees: [] };
+}
+function flattenAll(tree, out) { out.push(...tree.points); tree.subtrees.forEach((s) => flattenAll(s, out)); }
+function collectSegments(tree, out, depth) {
+  out.push({ id: tree.id, points: tree.points, startTick: tree.startTick, depth: depth || 0, isLeaf: tree.subtrees.length === 0 });
+  tree.subtrees.forEach((s) => collectSegments(s, out, (depth || 0) + 1));
+}
+function nearestDist(p, arr) {
+  let m = Infinity;
+  for (const q of arr) { const d = Math.hypot(p.x - q.x, p.y - q.y); if (d < m) m = d; }
+  return m;
+}
+function chamferScore(a, b) {
+  const d1 = a.reduce((s, p) => s + nearestDist(p, b), 0) / a.length;
+  const d2 = b.reduce((s, p) => s + nearestDist(p, a), 0) / b.length;
+  return Math.max(0, Math.min(100, 100 * (1 - ((d1 + d2) / 2) / 80)));
+}
+function starsFor(m) { return m >= 90 ? 3 : m >= 70 ? 2 : m >= 40 ? 1 : 0; }
+
+function project(points, w, h, pad) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }
+  const scale = Math.min((w - 2 * pad) / Math.max(maxX - minX, 1), (h - 2 * pad) / Math.max(maxY - minY, 1), 4);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  lastTransform = { scale, cx, cy };
+  return (p) => ({ x: w / 2 + (p.x - cx) * scale, y: h / 2 + (p.y - cy) * scale });
+}
+
+// ================= TOOL PROP ART =================
+function drawLightProp(c, x, y, s) {
+  s = s || 1; c.save(); c.translate(x, y); c.scale(s, s);
+  const glow = c.createRadialGradient(0, 6, 2, 0, 6, 46);
+  glow.addColorStop(0, 'rgba(255,206,92,0.55)');
+  glow.addColorStop(0.5, 'rgba(255,214,120,0.18)');
+  glow.addColorStop(1, 'rgba(255,214,120,0)');
+  c.fillStyle = glow;
+  c.beginPath(); c.moveTo(-9, 2); c.lineTo(9, 2); c.lineTo(30, 48); c.lineTo(-30, 48); c.closePath(); c.fill();
+  c.beginPath(); c.arc(0, 6, 20, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#b98a3d'; c.lineWidth = 2.4; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(0, -22); c.lineTo(0, -13); c.stroke();
+  c.fillStyle = '#f0b73f';
+  c.beginPath(); c.moveTo(-13, 1); c.lineTo(13, 1); c.lineTo(8, -13); c.lineTo(-8, -13); c.closePath(); c.fill();
+  c.fillStyle = '#fff1c4';
+  c.beginPath(); c.ellipse(0, 2, 9, 3.6, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#ffe08a';
+  c.beginPath(); c.arc(0, 6, 4.6, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+function drawShearsProp(c, x, y, s) {
+  s = s || 1; c.save(); c.translate(x, y); c.scale(s, s);
+  c.strokeStyle = '#c9556e'; c.lineWidth = 3.4; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(-11, -12); c.lineTo(7, 9); c.stroke();
+  c.beginPath(); c.moveTo(11, -12); c.lineTo(-7, 9); c.stroke();
+  c.lineWidth = 2.6;
+  c.beginPath(); c.arc(-9, 14, 5.2, 0, Math.PI * 2); c.stroke();
+  c.beginPath(); c.arc(9, 14, 5.2, 0, Math.PI * 2); c.stroke();
+  c.fillStyle = '#c9556e';
+  c.beginPath(); c.arc(0, 0, 2.8, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = 'rgba(201,85,110,0.45)'; c.lineWidth = 2; c.setLineDash([3, 3]);
+  c.beginPath(); c.moveTo(-24, -18); c.lineTo(24, -18); c.stroke();
+  c.setLineDash([]); c.restore();
+}
+function drawWaterProp(c, x, y, s) {
+  s = s || 1; c.save(); c.translate(x, y); c.scale(s, s);
+  c.fillStyle = '#5fb4dd';
+  c.beginPath(); c.roundRect(-12, -10, 19, 15, 4); c.fill();
+  c.beginPath(); c.moveTo(6, -8); c.lineTo(17, -14); c.lineTo(19, -10); c.lineTo(7, -3); c.closePath(); c.fill();
+  c.strokeStyle = '#5fb4dd'; c.lineWidth = 2.6; c.lineCap = 'round';
+  c.beginPath(); c.arc(-6, -12, 6, Math.PI, Math.PI * 1.9); c.stroke();
+  c.fillStyle = '#8ed3f0';
+  [[15, -2], [18, 4], [13, 6]].forEach(([dx, dy]) => {
+    c.beginPath(); c.moveTo(dx, dy);
+    c.bezierCurveTo(dx + 3.4, dy + 4, dx + 3, dy + 8, dx, dy + 8);
+    c.bezierCurveTo(dx - 3, dy + 8, dx - 3.4, dy + 4, dx, dy);
+    c.fill();
+  });
+  c.restore();
+}
+function drawForkProp(c, x, y, s) {
+  s = s || 1; c.save(); c.translate(x, y); c.scale(s, s);
+  c.strokeStyle = '#9d63c4'; c.lineWidth = 3.4; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(0, 14); c.lineTo(0, 1); c.lineTo(-10, -11); c.stroke();
+  c.beginPath(); c.moveTo(0, 1); c.lineTo(10, -11); c.stroke();
+  c.fillStyle = '#c9a0e0';
+  c.beginPath(); c.ellipse(-12, -14, 5.4, 3.4, -0.7, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.ellipse(12, -14, 5.4, 3.4, 0.7, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#9d63c4';
+  c.beginPath(); c.arc(0, 1, 3, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+const PROP_DRAW = { light: drawLightProp, shears: drawShearsProp, water: drawWaterProp, fork: drawForkProp };
+
+// ================= BOARD RENDERING =================
+function drawSnapGrid(projFn) {
+  if (!lastTransform) return;
+  const { scale, cx, cy } = lastTransform;
+  const minX = -canvas.width / 2 / scale + cx, maxX = canvas.width / 2 / scale + cx;
+  const minY = -canvas.height / 2 / scale + cy, maxY = canvas.height / 2 / scale + cy;
+  ctx.save(); ctx.fillStyle = '#e2d9ea';
+  for (let x = Math.floor(minX / GRID_SIZE) * GRID_SIZE; x <= maxX; x += GRID_SIZE) {
+    for (let y = Math.floor(minY / GRID_SIZE) * GRID_SIZE; y <= maxY; y += GRID_SIZE) {
+      const sp = projFn({ x, y });
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, 1.4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function drawTaperedRun(projFn, points, depth, opts) {
+  if (points.length < 2) return;
+  const baseW = Math.max(3, 13 - depth * 3.2), tipW = Math.max(1.6, baseW * 0.42);
+  ctx.save();
+  if (opts.blur) ctx.filter = `blur(${opts.blur}px)`;
+  ctx.globalAlpha = opts.alpha ?? 1;
+  ctx.strokeStyle = opts.color; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (let i = 0; i < points.length - 1; i++) {
+    const t = i / Math.max(points.length - 2, 1);
+    ctx.lineWidth = baseW + (tipW - baseW) * t;
+    const a = projFn(points[i]), b = projFn(points[i + 1]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawFoliage(projFn, tip, depth, opts) {
+  const sp = projFn(tip), r = Math.max(11, 21 - depth * 3);
+  ctx.save();
+  if (opts.blur) ctx.filter = `blur(${opts.blur}px)`;
+  ctx.globalAlpha = opts.alpha ?? 1;
+  [[0, -r * 0.35, r * 0.78], [-r * 0.6, r * 0.1, r * 0.6], [r * 0.6, r * 0.1, r * 0.6], [0, r * 0.42, r * 0.52]]
+    .forEach(([dx, dy, rr], i) => {
+      ctx.fillStyle = opts.leafColors[i % opts.leafColors.length];
+      ctx.beginPath(); ctx.arc(sp.x + dx, sp.y + dy, rr, 0, Math.PI * 2); ctx.fill();
+    });
+  ctx.restore();
+}
+function drawPot(projFn) {
+  const sp = projFn({ x: 0, y: 0 }), w = 62, h = 30;
+  ctx.save();
+  ctx.fillStyle = '#e4a68c';
+  ctx.beginPath();
+  ctx.moveTo(sp.x - w / 2, sp.y); ctx.lineTo(sp.x + w / 2, sp.y);
+  ctx.lineTo(sp.x + w / 2 - 9, sp.y + h); ctx.lineTo(sp.x - w / 2 + 9, sp.y + h);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#d99177';
+  ctx.beginPath(); ctx.roundRect(sp.x - w / 2 - 5, sp.y - 9, w + 10, 12, 6); ctx.fill();
+  ctx.fillStyle = '#8a6a52';
+  ctx.beginPath(); ctx.ellipse(sp.x, sp.y - 6, w / 2 - 4, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawTargetTree(projFn, segs) {
+  ctx.save();
+  ctx.globalAlpha = 0.85; ctx.strokeStyle = '#bdb0c9'; ctx.lineWidth = 2.5;
+  ctx.setLineDash([7, 6]); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  segs.forEach((s) => {
+    ctx.beginPath();
+    s.points.forEach((p, i) => { const sp = projFn(p); i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y); });
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  segs.filter((s) => s.isLeaf).forEach((s) => {
+    const sp = projFn(s.points[s.points.length - 1]);
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, Math.max(9, 17 - s.depth * 3), 0, Math.PI * 2); ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// Split each segment at the slider's cycle so growth up to `currentTick`
+// reads as "already grown" and the rest as a faint future.
+function drawLiveTree(projFn, segs) {
+  const grownStyle = committed
+    ? { color: '#7a5c46', leafColors: ['#7ec99b', '#95d6ac', '#6bbd8b', '#a8dfbc'] }
+    : { color: '#8fbf9f', blur: 3, alpha: 0.62, leafColors: ['#a5dcbb', '#b6e5c8', '#98d4ae', '#c3ead2'] };
+  const futureStyle = { color: '#c4d8cb', blur: 3.5, alpha: 0.3, leafColors: ['#d8ece0', '#e2f1e8', '#d0e8db', '#e6f4ec'] };
+
+  segs.forEach((s) => {
+    // point i of this segment sits at global cycle startTick + i
+    const cut = clamp(currentTick - s.startTick, 0, s.points.length - 1);
+    if (cut >= 1) drawTaperedRun(projFn, s.points.slice(0, cut + 1), s.depth, grownStyle);
+    if (cut < s.points.length - 1) drawTaperedRun(projFn, s.points.slice(cut), s.depth, futureStyle);
+  });
+  segs.filter((s) => s.isLeaf).forEach((s) => {
+    const endTick = s.startTick + s.points.length - 1;
+    const style = currentTick >= endTick ? grownStyle : futureStyle;
+    drawFoliage(projFn, s.points[s.points.length - 1], s.depth, style);
+  });
+}
+
+// markers carry the cycle they act on so the current cycle can be highlighted
+function collectMarkers(node, tree) {
+  const markers = [];
+  node.schedule.forEach((entry, i) => {
+    if (!entry) return;
+    const gt = tree.startTick + i;
+    if (entry.pos) markers.push({ tool: entry.tool, pos: entry.pos, branchId: node.id, idx: i, gTick: gt });
+    else if (entry.tool === 'water') markers.push({ tool: 'water', pos: tree.points[i + 1], branchId: node.id, idx: i, gTick: gt, derived: true });
+  });
+  tree.subtrees.forEach((sub, k) => markers.push(...collectMarkers(node.children[k], sub)));
+  return markers;
+}
+
+let lastMarkerScreens = [];   // for hit testing during drag
+
+function render() {
+  const level = LEVELS[levelIndex];
+  const liveNode = liveView(rootId);
+  const liveTree = growPoints(liveNode, { x: 0, y: 0 }, 0, 0);
+  const targetTree = growPoints(level.target, { x: 0, y: 0 }, 0, 0);
+  const liveSegs = []; collectSegments(liveTree, liveSegs, 0);
+  const targetSegs = []; collectSegments(targetTree, targetSegs, 0);
+  const markers = collectMarkers(liveNode, liveTree);
+
+  const allPts = []; flattenAll(liveTree, allPts); flattenAll(targetTree, allPts);
+  markers.forEach((m) => allPts.push(m.pos));
+  if (drag && drag.overBoard && drag.simX !== undefined) allPts.push({ x: drag.simX, y: drag.simY });
+  const projFn = project(allPts, canvas.width, canvas.height, 58);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawSnapGrid(projFn);
+  drawTargetTree(projFn, targetSegs);
+  drawLiveTree(projFn, liveSegs);
+  drawPot(projFn);
+
+  lastMarkerScreens = [];
+  markers.forEach((m) => {
+    const sp = projFn(m.pos);
+    const isCurrent = m.gTick === currentTick - 1;
+    const beingDragged = drag && !drag.isNew && drag.branchId === m.branchId && drag.idx === m.idx;
+    ctx.save();
+    ctx.globalAlpha = beingDragged ? 0.25 : (isCurrent ? 1 : 0.45);
+    if (isCurrent && !beingDragged) {
+      ctx.strokeStyle = 'rgba(161,115,194,0.75)'; ctx.lineWidth = 2.5; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, 27, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    PROP_DRAW[m.tool](ctx, sp.x, sp.y, 1);
+    ctx.restore();
+    if (!m.derived) lastMarkerScreens.push({ ...m, sx: sp.x, sy: sp.y });
+  });
+
+  // drop preview while dragging over the board
+  if (drag && drag.overBoard && drag.simX !== undefined) {
+    const sp = projFn({ x: drag.simX, y: drag.simY });
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = 'rgba(161,115,194,0.9)'; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, 30, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.6;
+    PROP_DRAW[drag.tool](ctx, sp.x, sp.y, 1);
+    ctx.restore();
+  }
+}
+
+// ================= UI: dock, timeline slider, drag & drop =================
+function buildDock() {
+  const dock = document.getElementById('dock');
+  dock.innerHTML = '<div class="dock-label">Kéo thả</div>';
+  LEVELS[levelIndex].allowed.forEach((key) => {
+    const def = TOOLS[key];
+    const item = document.createElement('div');
+    item.className = 'dock-item';
+    item.dataset.tool = key;
+    const c = document.createElement('canvas');
+    c.width = 48; c.height = 48;
+    PROP_DRAW[key](c.getContext('2d'), 24, 24, 0.62);
+    item.appendChild(c);
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = def.label;
+    item.appendChild(nm);
+    item.addEventListener('pointerdown', (e) => startDragNew(e, key));
+    dock.appendChild(item);
+  });
+}
+
+function toolsAtGlobalTick(gt) {
+  const offsets = computeOffsets();
+  const found = [];
+  for (const id in branchMap) {
+    const b = branchMap[id], off = offsets[id];
+    for (let j = 0; j < activeLen(b); j++) {
+      if (off + j === gt && b.schedule[j]) found.push({ tool: b.schedule[j].tool, branchId: id, idx: j });
+    }
+  }
+  return found;
+}
+
+function buildTimeline() {
+  const level = LEVELS[levelIndex];
+  const track = document.getElementById('tlTrack');
+  track.innerHTML = '';
+  for (let k = 1; k <= level.ticks; k++) {
+    const cell = document.createElement('div');
+    cell.className = 'tl-cell' + (k === currentTick ? ' current' : '') + (k < currentTick ? ' past' : '');
+    cell.dataset.tick = k;
+    const icons = document.createElement('div');
+    icons.className = 'icons';
+    toolsAtGlobalTick(k - 1).slice(0, 3).forEach((t) => {
+      const ic = document.createElement('canvas');
+      ic.width = 26; ic.height = 26;
+      PROP_DRAW[t.tool](ic.getContext('2d'), 13, 13, 0.36);
+      icons.appendChild(ic);
+    });
+    cell.appendChild(icons);
+    const n = document.createElement('div'); n.className = 'n'; n.textContent = k;
+    cell.appendChild(n);
+    track.appendChild(cell);
+  }
+  document.getElementById('curTick').textContent = currentTick;
+  document.getElementById('maxTick').textContent = level.ticks;
+  const placed = toolsAtGlobalTick(currentTick - 1);
+  document.getElementById('tlTip').textContent = placed.length
+    ? `Chu kỳ ${currentTick}: ${placed.map((p) => TOOLS[p.tool].label + ' (' + labelFor(p.branchId) + ')').join(', ')}`
+    : `Chu kỳ ${currentTick}: chưa có công cụ — kéo một cái từ dock thả lên board.`;
+}
+
+// slider behaviour: click or drag anywhere along the track
+function tickFromClientX(clientX) {
+  const track = document.getElementById('tlTrack');
+  const r = track.getBoundingClientRect();
+  const n = LEVELS[levelIndex].ticks;
+  const rel = clamp((clientX - r.left - 5) / (r.width - 10), 0, 0.9999);
+  return Math.floor(rel * n) + 1;
+}
+let scrubbing = false;
+const tlTrack = document.getElementById('tlTrack');
+tlTrack.addEventListener('pointerdown', (e) => {
+  scrubbing = true;
+  tlTrack.setPointerCapture(e.pointerId);
+  setTick(tickFromClientX(e.clientX));
+});
+tlTrack.addEventListener('pointermove', (e) => { if (scrubbing) setTick(tickFromClientX(e.clientX)); });
+tlTrack.addEventListener('pointerup', () => { scrubbing = false; });
+tlTrack.addEventListener('pointercancel', () => { scrubbing = false; });
+
+function setTick(k) {
+  const n = LEVELS[levelIndex].ticks;
+  k = clamp(k, 1, n);
+  if (k === currentTick) return;
+  currentTick = k;
+  buildTimeline();
+  render();
+}
+
+function showToast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind === 'warn' ? ' warn' : '');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.className = 'toast'; }, 2600);
+}
+
+// ---- drag & drop ----
+const ghostEl = document.getElementById('dragGhost');
+function paintGhost(tool) {
+  const g = ghostEl.getContext('2d');
+  g.clearRect(0, 0, ghostEl.width, ghostEl.height);
+  PROP_DRAW[tool](g, 35, 35, 0.8);
+}
+function startDragNew(e, tool) {
+  e.preventDefault();
+  drag = { tool, isNew: true };
+  paintGhost(tool);
+  ghostEl.classList.add('show');
+  moveGhost(e.clientX, e.clientY);
+  updateDragTarget(e.clientX, e.clientY);
+}
+function startDragExisting(e, marker) {
+  e.preventDefault();
+  drag = { tool: marker.tool, isNew: false, branchId: marker.branchId, idx: marker.idx };
+  paintGhost(marker.tool);
+  ghostEl.classList.add('show');
+  document.getElementById('trash').classList.add('show');
+  moveGhost(e.clientX, e.clientY);
+  updateDragTarget(e.clientX, e.clientY);
+}
+function moveGhost(x, y) { ghostEl.style.left = x + 'px'; ghostEl.style.top = y + 'px'; }
+function updateDragTarget(clientX, clientY) {
+  if (!drag) return;
+  const r = canvas.getBoundingClientRect();
+  const inside = clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  drag.overBoard = inside;
+  canvas.classList.toggle('dropping', inside);
+  if (inside && lastTransform) {
+    const sx = (clientX - r.left) * (canvas.width / r.width);
+    const sy = (clientY - r.top) * (canvas.height / r.height);
+    drag.simX = snapToGrid((sx - canvas.width / 2) / lastTransform.scale + lastTransform.cx);
+    drag.simY = snapToGrid((sy - canvas.height / 2) / lastTransform.scale + lastTransform.cy);
+  } else {
+    drag.simX = undefined; drag.simY = undefined;
+  }
+  const trash = document.getElementById('trash');
+  if (!drag.isNew) {
+    const tr = trash.getBoundingClientRect();
+    trash.classList.toggle('hot', clientX >= tr.left && clientX <= tr.right && clientY >= tr.top && clientY <= tr.bottom);
+  }
+  render();
+}
+document.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  moveGhost(e.clientX, e.clientY);
+  updateDragTarget(e.clientX, e.clientY);
+});
+document.addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  const d = drag;
+  ghostEl.classList.remove('show');
+  document.getElementById('trash').classList.remove('show', 'hot');
+  canvas.classList.remove('dropping');
+  drag = null;
+  if (d.overBoard && d.simX !== undefined) dropOnBoard(d);
+  else if (!d.isNew) { clearSlot(d.branchId, d.idx); committed = false; lastResult = null; showToast('Đã xoá công cụ.'); refreshAll(); }
+  else render();
+});
+
+// pick up an already-placed tool straight off the board
+canvas.addEventListener('pointerdown', (e) => {
+  const r = canvas.getBoundingClientRect();
+  const sx = (e.clientX - r.left) * (canvas.width / r.width);
+  const sy = (e.clientY - r.top) * (canvas.height / r.height);
+  let hit = null, best = 26;
+  lastMarkerScreens.forEach((m) => {
+    const d = Math.hypot(m.sx - sx, m.sy - sy);
+    if (d < best) { best = d; hit = m; }
+  });
+  if (hit) { setTick(hit.gTick + 1); startDragExisting(e, hit); }
+});
+
+// Which branch should receive a tool dropped here? The one whose tip at this
+// cycle is closest to the drop point (single-branch levels always pick trunk).
+function pickBranchAt(gTick, simPos) {
+  const offsets = computeOffsets();
+  const liveNode = liveView(rootId);
+  const tree = growPoints(liveNode, { x: 0, y: 0 }, 0, 0);
+  const segs = []; collectSegments(tree, segs, 0);
+  const candidates = [];
+  for (const id in branchMap) {
+    const b = branchMap[id], off = offsets[id];
+    const localIdx = gTick - off;
+    if (localIdx < 0 || localIdx >= activeLen(b)) continue;
+    const seg = segs.find((s) => s.id === id);
+    // compare at the END of this cycle's segment: two freshly forked children
+    // share their start point, so only the end point tells them apart
+    const ref = seg ? seg.points[clamp(localIdx + 1, 0, seg.points.length - 1)] : { x: 0, y: 0 };
+    candidates.push({ branchId: id, localIdx, dist: Math.hypot(ref.x - simPos.x, ref.y - simPos.y) });
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.dist - b.dist);
+  return candidates[0];
+}
+
+function dropOnBoard(d) {
+  const gTick = currentTick - 1;
+  const pos = { x: d.simX, y: d.simY };
+
+  if (!d.isNew) {
+    // moving an existing marker: keep its branch/cycle, just relocate it
+    const b = branchMap[d.branchId];
+    if (!b) return;
+    if (d.tool === 'fork') { b.schedule[d.idx] = { tool: 'fork', pos }; }
+    else b.schedule[d.idx] = { tool: d.tool, pos };
+    committed = false; lastResult = null;
+    refreshAll();
+    return;
+  }
+
+  const pick = pickBranchAt(gTick, pos);
+  if (!pick) { showToast('Chu kỳ này không có nhánh nào đang mọc.', 'warn'); return; }
+  const b = branchMap[pick.branchId];
+
+  if (d.tool === 'fork' && b.fullLength - (pick.localIdx + 1) <= 0) {
+    showToast('Không đủ chu kỳ còn lại để chẻ nhánh ở đây — chọn chu kỳ sớm hơn.', 'warn');
+    return;
+  }
+  if (d.tool === 'light' && !isLightFree(pick.branchId, pick.localIdx, computeOffsets())) {
+    showToast('Chỉ có MỘT đèn — nhánh khác đang dùng nó ở chu kỳ này.', 'warn');
+    return;
+  }
+  clearSlot(pick.branchId, pick.localIdx);
+  if (d.tool === 'fork') doFork(pick.branchId, pick.localIdx, pos);
+  else if (TOOLS[d.tool].needsPos) b.schedule[pick.localIdx] = { tool: d.tool, pos };
+  else b.schedule[pick.localIdx] = { tool: d.tool };
+
+  committed = false; lastResult = null;
+  showToast(`${TOOLS[d.tool].label} → ${labelFor(pick.branchId)}, chu kỳ ${currentTick}.`);
+  refreshAll();
+}
+
+function updateBadge() {
+  const badge = document.getElementById('badge');
+  if (!committed || !lastResult) { badge.innerHTML = '<span class="idle">Chưa chạy</span>'; return; }
+  const stars = '★'.repeat(lastResult.stars) + '☆'.repeat(3 - lastResult.stars);
+  const color = lastResult.match >= 90 ? 'var(--good)' : lastResult.match >= 40 ? 'var(--mid)' : 'var(--bad)';
+  const note = lastResult.match >= 90 ? 'Gần như hoàn hảo.' : lastResult.match >= 70 ? 'Khá sát rồi.' : lastResult.match >= 40 ? 'Còn lệch nhiều.' : 'Còn xa mẫu.';
+  badge.innerHTML = `<div class="match" style="color:${color}">${lastResult.match.toFixed(0)}%</div><div class="stars">${stars}</div><div class="note">${note}</div>`;
+}
+
+function refreshAll() { buildTimeline(); updateBadge(); render(); }
+
+function loadLevel(idx) {
+  levelIndex = (idx + LEVELS.length) % LEVELS.length;
+  const level = LEVELS[levelIndex];
+  resetTree(level.ticks);
+  committed = false; lastResult = null; drag = null;
+  currentTick = 1;
+  document.getElementById('levelName').textContent = level.name;
+  document.getElementById('levelHint').textContent = level.hint;
+  buildDock();
+  refreshAll();
+}
+function growNow() {
+  const level = LEVELS[levelIndex];
+  const a = []; flattenAll(growPoints(liveView(rootId), { x: 0, y: 0 }, 0, 0), a);
+  const t = []; flattenAll(growPoints(level.target, { x: 0, y: 0 }, 0, 0), t);
+  const match = chamferScore(a, t);
+  lastResult = { match, stars: starsFor(match) };
+  committed = true;
+  currentTick = level.ticks;   // reveal the whole tree on commit
+  refreshAll();
+}
+function resetSchedule() {
+  resetTree(LEVELS[levelIndex].ticks);
+  committed = false; lastResult = null; drag = null;
+  currentTick = 1;
+  refreshAll();
+}
+
+document.getElementById('prevBtn').onclick = () => loadLevel(levelIndex - 1);
+document.getElementById('nextBtn').onclick = () => loadLevel(levelIndex + 1);
+document.getElementById('growBtn').onclick = growNow;
+document.getElementById('resetBtn').onclick = resetSchedule;
+
+loadLevel(0);
+</script>
+</body>
+</html>

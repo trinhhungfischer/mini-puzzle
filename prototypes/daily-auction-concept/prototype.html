@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sàn Đấu Giá Hằng Ngày</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#191c23; --panel2:#222632; --line:#2e3340;
+  --text:#e8eaf0; --muted:#9aa1b2; --gold:#fbbf24; --good:#34d399; --bad:#f87171; --accent:#60a5fa;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:hover{border-color:#4a5163}
+button.primary{background:#2563eb;border-color:#2563eb;color:#fff;font-weight:600}
+button.gold{background:var(--gold);border-color:var(--gold);color:#1a1300;font-weight:700}
+button:disabled{opacity:.4;cursor:default}
+input[type=number],input[type=text]{font:inherit;color:var(--text);background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:96px}
+input[type=text]{width:100%}
+#app{max-width:880px;margin:0 auto;padding:12px 16px 32px}
+header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+header h1{font-size:18px;margin:0;flex:1;min-width:160px}
+header .meta{color:var(--muted);font-size:12px}
+.pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px}
+.sec-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;justify-content:space-between}
+
+/* Market board */
+.board{display:grid;grid-template-columns:minmax(110px,1.4fr) auto repeat(4,minmax(30px,.5fr)) minmax(50px,.7fr);gap:4px 6px;align-items:center;font-size:13px}
+.board .h{color:var(--muted);font-size:11px;text-align:center}
+.board .h.l{text-align:left}
+.board .cat{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden}
+.board .cat .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.pips{display:flex;gap:3px}
+.pip{width:12px;height:12px;border-radius:3px;border:1px solid var(--line);background:#0b0d11}
+.pip.on{border-color:transparent}
+.cell{text-align:center;color:var(--muted)}
+.cell.v{color:var(--text);font-weight:600}
+.now{text-align:center;font-weight:700;border-radius:6px;padding:2px 0}
+.now.z{color:#555c6c;font-weight:400}
+
+/* Players */
+.players{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.pl{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 8px;position:relative;min-height:74px}
+.pl.turn{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.pl.lead{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+.pl .nm{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl .mn{color:var(--gold);font-weight:700}
+.pl .won{font-size:12px;color:var(--muted);margin-top:2px;min-height:16px}
+.pl .tag{position:absolute;top:-8px;right:6px;font-size:10px;background:var(--accent);color:#fff;border-radius:6px;padding:0 5px}
+.pl .bub{font-size:11px;margin-top:2px;color:var(--muted)}
+.pl .bub.b{color:var(--good);font-weight:600}
+.pl .bub.p{color:#6b7280}
+
+/* Stage */
+.stage{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.lots{display:flex;gap:6px}
+.stage-info{flex:1;min-width:200px}
+.stage-info .big{font-size:20px;font-weight:700}
+.prompt{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:8px}
+.prompt .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.hint{color:var(--muted);font-size:12px}
+.hint b{color:var(--text)}
+.idle{color:var(--muted)}
+
+/* Cards */
+.hand{display:flex;gap:6px;overflow-x:auto;padding:6px 2px 4px;min-height:104px}
+.card{flex:none;width:66px;height:92px;border-radius:10px;border:1px solid #0006;background:linear-gradient(160deg,var(--c) 0%,color-mix(in srgb,var(--c) 45%,#000) 100%);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:5px 3px;position:relative;user-select:none;transition:transform .12s, opacity .12s}
+.card .ic{font-size:26px;line-height:1;margin-top:4px}
+.card .cn{font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px #0008;text-align:center}
+.card .ty{font-size:10px;background:#000a;color:#fff;border-radius:6px;padding:1px 5px;white-space:nowrap}
+.card.click{cursor:pointer;box-shadow:0 0 0 2px var(--gold)}
+.card.click:hover{transform:translateY(-4px)}
+.card.dim{opacity:.35}
+.card .warn{position:absolute;top:-7px;left:-5px;background:var(--bad);color:#fff;font-size:9px;border-radius:6px;padding:0 4px}
+.card.lg{width:80px;height:110px}
+.card.lg .ic{font-size:32px}
+
+/* Log */
+details{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+summary{cursor:pointer;color:var(--muted);font-size:12px}
+#log{max-height:200px;overflow:auto;font-size:12px;margin-top:6px;display:flex;flex-direction:column-reverse}
+#log div{padding:2px 0;border-bottom:1px solid #ffffff08}
+#log .sys{color:var(--gold)}
+
+/* Modal */
+.modal{position:fixed;inset:0;background:#000b;display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+.modal.hidden{display:none}
+.modal-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:18px}
+.modal-card h2{margin:0 0 8px;font-size:20px}
+.modal-card h3{margin:14px 0 6px;font-size:15px}
+.modal-card p{margin:6px 0;color:#cdd2dc}
+.modal-card ul{padding-left:18px;margin:6px 0;color:#cdd2dc}
+.modal-card li{margin:3px 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--muted);font-weight:500;font-size:12px}
+td.n,th.n{text-align:right}
+tr.me td{background:#2563eb22;font-weight:600}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.tabs{display:flex;gap:6px;margin:8px 0}
+.tabs button.on{background:#2563eb;border-color:#2563eb;color:#fff}
+.rank{display:inline-block;min-width:22px;text-align:center;border-radius:6px;padding:0 4px;font-weight:700}
+.r1{background:var(--gold);color:#1a1300}.r2{background:#cbd5e1;color:#111}.r3{background:#d97706;color:#fff}
+.bot{color:var(--muted)}
+@media (max-width:560px){
+  .players{grid-template-columns:repeat(2,1fr)}
+  .board{grid-template-columns:minmax(80px,1.2fr) auto repeat(4,minmax(22px,.4fr)) minmax(40px,.6fr);font-size:12px;gap:4px}
+  .board .cat .full{display:none}
+  .pip{width:10px;height:10px}
+}
+@media (min-width:561px){ .board .cat .short{display:none} }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🏛️ Sàn Đấu Giá Hằng Ngày</h1>
+    <span class="pill" id="seasonPill">Mùa —</span>
+    <span class="pill" id="roundPill">Vòng —</span>
+    <button id="btnSpeed" title="Tốc độ">⏩ Thường</button>
+    <button id="btnLB">🏆 BXH</button>
+    <button id="btnRules">📜 Luật</button>
+  </header>
+
+  <section>
+    <div class="sec-title"><span>Thị trường — 5 dòng sưu tầm</span><span>Vòng kết thúc khi 1 dòng đạt 5 món</span></div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <section>
+    <div class="sec-title"><span>Nhà sưu tầm</span><span id="bankInfo"></span></div>
+    <div class="players" id="players"></div>
+  </section>
+
+  <section>
+    <div class="sec-title"><span>Sàn đấu giá</span></div>
+    <div id="stage"></div>
+  </section>
+
+  <section>
+    <div class="sec-title"><span>Kho của bạn</span><span id="handCount"></span></div>
+    <div class="hand" id="hand"></div>
+  </section>
+
+  <details id="logWrap" open><summary>Nhật ký phiên</summary><div id="log"></div></details>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-card" id="modalBody"></div></div>
+
+<script>
+/* =====================================================================
+   CONFIG — mọi con số cân bằng nằm ở đây
+   ===================================================================== */
+const CATS = [
+  { id:0, name:'Gốm Chu Đậu',   short:'Gốm',    icon:'🏺', color:'#14b8a6', count:12 },
+  { id:1, name:'Đồng hồ cổ',    short:'Đ.hồ',   icon:'🕰️', color:'#f59e0b', count:13 },
+  { id:2, name:'Tem quý',       short:'Tem',    icon:'📮', color:'#f43f5e', count:14 },
+  { id:3, name:'Tranh sơn mài', short:'Tranh',  icon:'🖼️', color:'#8b5cf6', count:15 },
+  { id:4, name:'Đá quý',        short:'Đá',     icon:'💎', color:'#3b82f6', count:16 },
+];
+const TYPES = {
+  open:   { name:'Mở',          icon:'🔊', desc:'Ai cũng trả giá tự do, cao dần. Bỏ lượt là rời phiên.' },
+  once:   { name:'Một vòng',    icon:'🔁', desc:'Mỗi người được trả giá đúng 1 lần, theo vòng; người bán nói cuối.' },
+  sealed: { name:'Kín',         icon:'✉️', desc:'Mọi người cùng bỏ giá kín; giá cao nhất thắng (hoà: ưu tiên người bán, rồi theo vòng).' },
+  fixed:  { name:'Giá cố định', icon:'🏷️', desc:'Người bán niêm yết giá; lần lượt từng người được mua. Không ai mua thì người bán phải tự mua.' },
+  double: { name:'Đôi',         icon:'✌️', desc:'Ghép thêm 1 món cùng dòng để bán cả cặp, theo kiểu đấu giá của món ghép.' },
+};
+// Thứ tự kiểu đấu giá gán cho các lá trong mỗi dòng (cắt theo count)
+const TYPE_PATTERN = ['open','once','sealed','fixed','double','open','sealed','once','fixed','open','double','once','sealed','fixed','open','open'];
+const CONFIG = {
+  startMoney: 100,
+  rounds: 4,
+  deal: [9, 4, 4, 0],        // số lá chia thêm đầu mỗi vòng (4 người — theo Modern Art)
+  endCount: 5,               // món thứ 5 của 1 dòng kết thúc vòng
+  awards: [30, 20, 10],      // giá trị cộng cho dòng hạng 1/2/3 mỗi vòng
+};
+const AI_NAMES = ['Bà Tư Đồ Cổ', 'Ông Kha', 'Cô Mai'];
+const GHOST_NAMES = ['Lão Phát','Chị Hằng','Anh Tuấn','Cụ Bảy','Bé Na','Chú Lâm','Bác Ngọc','Cô Vy'];
+
+/* =====================================================================
+   RNG có seed — cùng một ngày => cùng bộ bài, cùng đối thủ
+   ===================================================================== */
+function hashStr(s){ let h=1779033703^s.length; for(let i=0;i<s.length;i++){ h=Math.imul(h^s.charCodeAt(i),3432918353); h=h<<13|h>>>19; } h=Math.imul(h^h>>>16,2246822507); h=Math.imul(h^h>>>13,3266489909); return (h^=h>>>16)>>>0; }
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+const rngFor = s => mulberry32(hashStr(s));
+function shuffle(a,rng){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(rng()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function buildDeck(rng){ const d=[]; let uid=0; for(const c of CATS) for(let i=0;i<c.count;i++) d.push({uid:uid++,cat:c.id,type:TYPE_PATTERN[i]}); return shuffle(d,rng); }
+const sortHand = h => h.sort((a,b)=>a.cat-b.cat||a.type.localeCompare(b.type));
+const removeCard = (h,c) => { const i=h.indexOf(c); if(i>=0) h.splice(i,1); };
+const sum = a => a.reduce((x,y)=>x+y,0);
+
+/* Xếp hạng các dòng theo số món trong vòng; hoà => dòng đứng trước thắng */
+function rankCats(counts){ return CATS.map(c=>c.id).filter(c=>counts[c]>0).sort((x,y)=>counts[y]-counts[x]||x-y).slice(0,3); }
+
+/* =====================================================================
+   ENGINE — không phụ thuộc UI; controller (người/AI) quyết định
+   ===================================================================== */
+class Game {
+  constructor({seed, names, controllers, emit}){
+    this.seed=seed; this.n=names.length; this.ctrl=controllers; this.emitFn=emit||(()=>{});
+    this.players=names.map((name,id)=>({id,name,money:CONFIG.startMoney,hand:[],won:[]}));
+    this.deck=buildDeck(rngFor('deck:'+seed));
+    this.round=0; this.played=CATS.map(()=>0);
+    this.history=CATS.map(()=>Array(CONFIG.rounds).fill(0));
+    this.bankIn=0; this.bankOut=0; this.turn=0; this.over=false;
+    this.roundResults=[]; this.stage=null; this.current=-1;
+  }
+  async emit(type,data={}){ await this.emitFn(type,data,this); }
+  next(i){ return (i+1)%this.n; }
+  cum(c){ return sum(this.history[c]); }
+  deal(k){ for(let i=0;i<k;i++) for(const p of this.players) if(this.deck.length) p.hand.push(this.deck.pop()); this.players.forEach(p=>sortHand(p.hand)); }
+  place(card){ this.played[card.cat]++; return this.played[card.cat]>=CONFIG.endCount; }
+  /** Giá trị mỗi món của từng dòng nếu vòng kết thúc với bộ đếm này */
+  valuesFor(counts){ const top=rankCats(counts); return CATS.map(c=>{ const k=top.indexOf(c.id); return k<0?0:this.cum(c.id)+CONFIG.awards[k]; }); }
+
+  async run(){
+    for(let r=0;r<CONFIG.rounds;r++){
+      this.round=r; this.played=CATS.map(()=>0);
+      this.deal(CONFIG.deal[r]);
+      await this.emit('roundStart',{round:r});
+      await this.playRound();
+      await this.scoreRound();
+    }
+    this.over=true;
+    await this.emit('gameOver',{});
+    return this.players.map(p=>p.money);
+  }
+
+  async playRound(){
+    let t=this.turn;
+    while(true){
+      let k=0; while(k<this.n && this.players[t].hand.length===0){ t=this.next(t); k++; }
+      if(k===this.n){ this.turn=t; await this.emit('log',{msg:'Mọi người đã hết vật phẩm — vòng kết thúc.'}); return; }
+      const a=t, pa=this.players[a];
+      this.current=a;
+      await this.emit('turn',{player:a});
+      let card=await this.ctrl[a].chooseCard(this,a);
+      if(!pa.hand.includes(card)) card=pa.hand[0];
+      removeCard(pa.hand,card);
+      const ended=this.place(card);
+      await this.emit('cardPlayed',{player:a,card,ended});
+      if(ended){ this.turn=this.next(a); return; }
+
+      let lots=[card], auctioneer=a, type=card.type;
+      if(type==='double'){
+        let added=null;
+        for(let k2=0;k2<this.n;k2++){
+          const q=(a+k2)%this.n, pq=this.players[q];
+          const opts=pq.hand.filter(c=>c.cat===card.cat && c.type!=='double');
+          if(!opts.length) continue;
+          const pick=await this.ctrl[q].chooseDoubleAdd(this,q,card,opts);
+          if(pick && opts.includes(pick)){ added={q,pick}; break; }
+          await this.emit('log',{msg:`${pq.name} không ghép đôi.`});
+        }
+        if(!added){ pa.won.push(card); await this.emit('doubleFree',{player:a,card}); t=this.next(a); continue; }
+        removeCard(this.players[added.q].hand,added.pick);
+        const ended2=this.place(added.pick);
+        await this.emit('doubleAdded',{player:added.q,card:added.pick,ended:ended2});
+        if(ended2){ this.turn=this.next(added.q); return; }
+        lots.push(added.pick); auctioneer=added.q; type=added.pick.type;
+      }
+      const res=await this.auction(type,lots,auctioneer);
+      this.settle(res,lots,auctioneer);
+      await this.emit('sold',{...res,lots,auctioneer,type});
+      this.stage=null;
+      t=this.next(auctioneer);
+    }
+  }
+
+  settle({winner,price},lots,a){
+    const w=this.players[winner];
+    w.money-=price;
+    if(winner===a) this.bankIn+=price; else this.players[a].money+=price;
+    w.won.push(...lots);
+  }
+
+  async auction(type,lots,a){
+    const st={type,lots,auctioneer:a,best:0,bidder:-1,price:0,bids:null,acted:{}};
+    this.stage=st;
+    await this.emit('auctionStart',st);
+    const can=(i,amt)=>this.players[i].money>=amt;
+    const n=this.n;
+    if(type==='open'){
+      const active=new Set([...Array(n).keys()]);
+      let i=this.next(a);
+      while([...active].some(x=>x!==st.bidder)){
+        if(active.has(i) && i!==st.bidder){
+          let amt=can(i,st.best+1) ? Math.floor(await this.ctrl[i].bid(this,i,st)||0) : 0;
+          if(amt>st.best && can(i,amt)){ st.best=amt; st.bidder=i; st.acted[i]='b'; await this.emit('bid',{player:i,amount:amt}); }
+          else { active.delete(i); st.acted[i]='p'; await this.emit('pass',{player:i}); }
+        }
+        i=this.next(i);
+      }
+    } else if(type==='once'){
+      let i=this.next(a);
+      for(let k=0;k<n;k++,i=this.next(i)){
+        let amt=can(i,st.best+1) ? Math.floor(await this.ctrl[i].bid(this,i,st)||0) : 0;
+        if(amt>st.best && can(i,amt)){ st.best=amt; st.bidder=i; st.acted[i]='b'; await this.emit('bid',{player:i,amount:amt}); }
+        else { st.acted[i]='p'; await this.emit('pass',{player:i}); }
+      }
+    } else if(type==='sealed'){
+      st.bids={};
+      for(let k=0;k<n;k++){
+        const i=(a+k)%n;
+        let amt=can(i,1) ? Math.floor(await this.ctrl[i].sealedBid(this,i,st)||0) : 0;
+        st.bids[i]=Math.max(0,Math.min(amt,this.players[i].money));
+        st.acted[i]='s';
+        await this.emit('sealedIn',{player:i});
+      }
+      for(let k=0;k<n;k++){ const i=(a+k)%n; if(st.bids[i]>st.best){ st.best=st.bids[i]; st.bidder=i; } }
+      await this.emit('sealedReveal',{bids:st.bids});
+    } else if(type==='fixed'){
+      let price=can(a,1) ? Math.floor(await this.ctrl[a].fixedPrice(this,a,st)||1) : 0;
+      price=Math.max(can(a,1)?1:0,Math.min(price,this.players[a].money));
+      st.price=price;
+      await this.emit('fixedSet',{player:a,price});
+      if(price>0){
+        for(let k=1;k<n;k++){
+          const i=(a+k)%n;
+          if(can(i,price) && await this.ctrl[i].acceptFixed(this,i,st)){ st.best=price; st.bidder=i; st.acted[i]='b'; break; }
+          st.acted[i]='p'; await this.emit('pass',{player:i});
+        }
+      }
+      if(st.bidder<0){ st.bidder=a; st.best=price; }
+    }
+    return st.bidder<0 ? {winner:a,price:0} : {winner:st.bidder,price:st.best};
+  }
+
+  async scoreRound(){
+    const counts=[...this.played], top=rankCats(counts);
+    top.forEach((c,k)=>this.history[c][this.round]=CONFIG.awards[k]);
+    const value=CATS.map(c=>top.includes(c.id)?this.cum(c.id):0);
+    const payouts=this.players.map(p=>sum(p.won.map(card=>value[card.cat])));
+    this.players.forEach((p,i)=>{ p.money+=payouts[i]; this.bankOut+=payouts[i]; });
+    const res={round:this.round,counts,top,value,payouts,won:this.players.map(p=>p.won.slice())};
+    this.roundResults.push(res);
+    await this.emit('roundEnd',res);
+    this.players.forEach(p=>p.won=[]);
+  }
+}
+
+/* =====================================================================
+   AI — định giá theo xếp hạng dự đoán, không trả quá giá trị
+   ===================================================================== */
+function makeAI(seed, seat, persona){
+  const rng=rngFor('ai:'+seed+':'+seat+':'+persona.tag);
+  const projRank=(g,p)=>{
+    const me=g.players[p];
+    const score=CATS.map(c=>g.played[c.id]+0.45*me.hand.filter(x=>x.cat===c.id).length - c.id*0.01);
+    const order=CATS.map(c=>c.id).sort((x,y)=>score[y]-score[x]);
+    return CATS.map(c=>order.indexOf(c.id));
+  };
+  const est=(g,p,cat)=>{
+    const rank=projRank(g,p)[cat];
+    const progress=Math.max(...g.played)/CONFIG.endCount;
+    if(rank<3){
+      const conf=Math.min(1,[0.9,0.75,0.6][rank]*(0.6+0.4*progress)+(g.played[cat]>=4?0.1:0));
+      return (g.cum(cat)+CONFIG.awards[rank])*conf;
+    }
+    return (g.cum(cat)+10)*0.12;
+  };
+  const maxFor=(g,i,st)=>{
+    const v=est(g,i,st.lots[0].cat)*st.lots.length;
+    const self=i===st.auctioneer;
+    // trả cho người khác thì họ được tiền => chỉ trả tối đa một phần giá trị
+    let m=self ? v*0.9 : v*persona.greed;
+    m=Math.floor(m+(rng()-0.5)*4);
+    return Math.max(0,Math.min(m,g.players[i].money));
+  };
+  return {
+    chooseCard(g,p){
+      const me=g.players[p]; let best=me.hand[0], bs=-1e9;
+      for(const card of me.hand){
+        const c=card.cat; let s;
+        if(g.played[c]+1>=CONFIG.endCount){
+          const counts=[...g.played]; counts[c]++;
+          const val=g.valuesFor(counts);
+          const pays=g.players.map(pl=>sum(pl.won.map(x=>val[x.cat])));
+          s=pays[p]-0.7*Math.max(...pays.filter((_,i)=>i!==p))-4;
+        } else {
+          const myWon=me.won.filter(x=>x.cat===c).length;
+          const pair=card.type==='double' && me.hand.some(x=>x!==card&&x.cat===c&&x.type!=='double');
+          s=est(g,p,c)*0.45+myWon*3+(pair?4:0)+rng()*3-(g.played[c]+1===CONFIG.endCount-1?3:0);
+        }
+        if(s>bs){ bs=s; best=card; }
+      }
+      return best;
+    },
+    chooseDoubleAdd(g,q,card,opts){
+      if(g.played[card.cat]+1>=CONFIG.endCount) return null;
+      if(q===g.current || est(g,q,card.cat)>12) return opts.find(o=>o.type==='open')||opts[0];
+      return null;
+    },
+    bid(g,i,st){
+      const m=maxFor(g,i,st);
+      if(m<=st.best) return 0;
+      if(st.type==='open') return Math.min(m, st.best+1+Math.floor(rng()*3));
+      if(i===st.auctioneer) return st.best+1;           // nói cuối: chỉ cần nhỉnh hơn
+      return st.best+1+Math.floor((m-st.best-1)*(0.4+0.4*rng()));
+    },
+    sealedBid(g,i,st){ return Math.floor(maxFor(g,i,st)*(0.7+0.25*rng())); },
+    fixedPrice(g,a,st){
+      const v=est(g,a,st.lots[0].cat)*st.lots.length;
+      return Math.max(1,Math.floor(v*(0.5+0.15*rng())));
+    },
+    acceptFixed(g,i,st){ return st.price<=maxFor(g,i,st); },
+  };
+}
+function personaFor(seed,k){ const r=rngFor('persona:'+seed+':'+k); return {tag:'p'+k, greed:0.5+0.25*r()}; }
+
+/* Ván toàn AI — dùng cho "bot" trên BXH và cho kiểm thử */
+async function runAiGame(seed, tag='sim', names){
+  names=names||['A','B','C','D'];
+  const ctrls=names.map((_,i)=>makeAI(seed,i,personaFor(seed+tag,i)));
+  const g=new Game({seed,names,controllers:ctrls});
+  await g.run();
+  return g;
+}
+
+/* =====================================================================
+   LEADERBOARD — adapter. Bản này lưu localStorage.
+   Khi ghép SDK: thay 3 hàm submit / getSeason / listSeasons bằng API server.
+   ===================================================================== */
+const LeaderboardAPI = {
+  KEY:'dailyAuction.lb.v1',
+  _mem:null, // dự phòng khi localStorage bị chặn (private mode, origin data:)
+  _load(){ try{ const v=JSON.parse(localStorage.getItem(this.KEY)); if(v) return v; }catch(e){} return this._mem?JSON.parse(JSON.stringify(this._mem)):{seasons:{}}; },
+  _save(d){ this._mem=JSON.parse(JSON.stringify(d)); try{ localStorage.setItem(this.KEY,JSON.stringify(d)); }catch(e){} },
+  async _ghosts(season){
+    const d=this._load(); const s=d.seasons[season];
+    if(s && s.ghosts) return s.ghosts;
+    const ghosts=[];
+    for(const [k,tag] of ['ghA','ghB'].entries()){
+      const g=await runAiGame(seedOf(season),tag,GHOST_NAMES.slice(k*4,k*4+4));
+      g.players.forEach(p=>ghosts.push({name:p.name,score:p.money,bot:true}));
+    }
+    const d2=this._load(); d2.seasons[season]=d2.seasons[season]||{entries:{}}; d2.seasons[season].ghosts=ghosts; this._save(d2);
+    return ghosts;
+  },
+  /** Ghi điểm; mỗi người giữ điểm cao nhất trong mùa (ngày) */
+  async submit(season,name,score){
+    const d=this._load(); const s=d.seasons[season]=d.seasons[season]||{entries:{}};
+    const e=s.entries[name]||{name,score:null,attempts:0};
+    e.attempts++; e.last=score; e.at=Date.now();
+    const improved=e.score==null||score>e.score; if(improved) e.score=score;
+    s.entries[name]=e; this._save(d);
+    return {improved,best:e.score,attempts:e.attempts};
+  },
+  /** Bảng xếp hạng 1 mùa: người thật + bot */
+  async getSeason(season){
+    const ghosts=await this._ghosts(season);
+    const s=this._load().seasons[season]||{entries:{}};
+    const rows=[...Object.values(s.entries).filter(e=>Number.isFinite(e.score)),...ghosts];
+    rows.sort((x,y)=>y.score-x.score||(x.bot?1:0)-(y.bot?1:0));
+    return rows;
+  },
+  async listSeasons(){ return Object.keys(this._load().seasons).sort().reverse(); },
+};
+
+/* =====================================================================
+   MÙA = NGÀY (giờ địa phương). ?day=YYYY-MM-DD để thử ngày khác.
+   ===================================================================== */
+const pad=n=>String(n).padStart(2,'0');
+function seasonId(){
+  const q=new URLSearchParams(location.search).get('day');
+  if(q && /^\d{4}-\d{2}-\d{2}$/.test(q)) return q;
+  const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+const seedOf = season => 'daily:'+season;
+function msToMidnight(){ const d=new Date(), m=new Date(d); m.setHours(24,0,0,0); return m-d; }
+function fmtDur(ms){ const s=Math.floor(ms/1000); return `${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`; }
+
+/* =====================================================================
+   UI
+   ===================================================================== */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const UI={ g:null, pending:null, speed:1, human:0, season:seasonId(), name:'', running:false };
+const wait=ms=>sleep(ms*UI.speed);
+const xu=n=>`${n} xu`;
+const cardLabel=c=>`${CATS[c.cat].icon} ${CATS[c.cat].short} [${TYPES[c.type].name}]`;
+const P=i=>UI.g.players[i].name;
+
+function cardEl(card,{lg=false,click=null,dim=false,warn=''}={}){
+  const c=CATS[card.cat], t=TYPES[card.type];
+  const el=document.createElement('div');
+  el.className='card'+(lg?' lg':'')+(click?' click':'')+(dim?' dim':'');
+  el.style.setProperty('--c',c.color);
+  el.innerHTML=`${warn?`<span class="warn">${warn}</span>`:''}<div class="ic">${c.icon}</div><div class="cn">${c.short}</div><div class="ty">${t.icon} ${t.name}</div>`;
+  el.title=`${c.name} — Đấu giá ${t.name}: ${t.desc}`;
+  if(click) el.onclick=click;
+  return el;
+}
+
+function addLog(msg,cls=''){ const d=document.createElement('div'); d.className=cls; d.textContent=msg; $('#log').prepend(d); }
+
+function render(){
+  const g=UI.g; if(!g) return;
+  $('#seasonPill').textContent=`Mùa ${UI.season}`;
+  $('#roundPill').textContent=`Vòng ${Math.min(g.round+1,CONFIG.rounds)}/${CONFIG.rounds}`;
+
+  // Board
+  const nowVal=g.valuesFor(g.played);
+  let h=`<div class="h l">Dòng</div><div class="h">Đã lên sàn</div>`;
+  for(let r=0;r<CONFIG.rounds;r++) h+=`<div class="h">V${r+1}</div>`;
+  h+=`<div class="h" title="Mỗi món đáng bao nhiêu nếu vòng kết thúc ngay bây giờ">Giá nếu<br>chốt ngay</div>`;
+  for(const c of CATS){
+    h+=`<div class="cat"><span class="sw" style="background:${c.color}"></span>${c.icon} <span class="full">${c.name}</span><span class="short">${c.short}</span></div>`;
+    h+=`<div class="pips">${Array.from({length:CONFIG.endCount},(_,k)=>`<span class="pip ${k<g.played[c.id]?'on':''}" style="${k<g.played[c.id]?'background:'+c.color:''}"></span>`).join('')}</div>`;
+    for(let r=0;r<CONFIG.rounds;r++){ const v=g.history[c.id][r]; h+=`<div class="cell ${v?'v':''}">${v||(r<g.round||g.roundResults.length>r?'·':'')}</div>`; }
+    h+=`<div class="now ${nowVal[c.id]?'':'z'}" style="${nowVal[c.id]?'background:'+c.color+'33':''}">${nowVal[c.id]||'0'}</div>`;
+  }
+  $('#board').innerHTML=h;
+
+  // Players
+  const st=g.stage;
+  $('#players').innerHTML=g.players.map((p,i)=>{
+    const counts=CATS.map(c=>p.won.filter(x=>x.cat===c.id).length);
+    const won=counts.map((n,k)=>n?`${CATS[k].icon}×${n}`:'').filter(Boolean).join(' ')||'—';
+    let tag='', bub='', cls='pl';
+    if(st && st.auctioneer===i) tag='<span class="tag">Người bán</span>';
+    else if(!st && g.current===i && !g.over) tag='<span class="tag">Lượt</span>';
+    if(st && st.bidder===i){ cls+=' lead'; bub=`<div class="bub b">Đang giữ giá ${xu(st.best)}</div>`; }
+    else if(st && st.acted[i]==='p') bub='<div class="bub p">Bỏ</div>';
+    else if(st && st.acted[i]==='s') bub=`<div class="bub">✉️ Đã bỏ giá kín</div>`;
+    if((st && st.auctioneer===i)||(!st && g.current===i)) cls+=' turn';
+    return `<div class="${cls}">${tag}<div class="nm">${i===UI.human?'🧑 ':''}${esc(p.name)}</div><div class="mn">${xu(p.money)}</div><div class="won" title="Món đã mua vòng này">${won}</div>${bub}<div class="hint">${p.hand.length} lá</div></div>`;
+  }).join('');
+  $('#bankInfo').textContent=`Kho bài còn ${g.deck.length}`;
+
+  renderStage();
+  renderHand();
+}
+
+function renderStage(){
+  const g=UI.g, st=g.stage, pend=UI.pending, root=$('#stage');
+  root.innerHTML='';
+  const wrap=document.createElement('div'); wrap.className='stage';
+  if(st){
+    const lots=document.createElement('div'); lots.className='lots';
+    st.lots.forEach(c=>lots.appendChild(cardEl(c,{lg:true})));
+    wrap.appendChild(lots);
+    const info=document.createElement('div'); info.className='stage-info';
+    const t=TYPES[st.type];
+    let line;
+    if(st.type==='fixed') line= st.price?`Giá niêm yết: <span class="big">${xu(st.price)}</span>`:'Người bán đang định giá…';
+    else if(st.type==='sealed') line= st.revealed ? (st.bidder>=0?`Giá kín cao nhất: <span class="big">${xu(st.best)}</span> — ${esc(P(st.bidder))}`:'Không ai bỏ giá') : 'Mọi người đang bỏ giá kín…';
+    else line= st.bidder>=0?`Giá cao nhất: <span class="big">${xu(st.best)}</span> — ${esc(P(st.bidder))}`:'Chưa ai trả giá';
+    info.innerHTML=`<div><b>${t.icon} Đấu giá ${t.name}</b> · người bán: <b>${esc(P(st.auctioneer))}</b>${st.lots.length>1?' · <b>cả cặp</b>':''}</div><div class="hint">${t.desc}</div><div style="margin-top:6px">${line}</div>`;
+    wrap.appendChild(info);
+  } else {
+    const d=document.createElement('div'); d.className='idle';
+    d.textContent=g.over?'Phiên đã kết thúc.':(g.current>=0?`Chờ ${P(g.current)} chọn vật phẩm…`:'');
+    wrap.appendChild(d);
+  }
+  root.appendChild(wrap);
+  if(pend) root.appendChild(promptEl(pend));
+}
+
+function valueHint(cat){
+  const v=UI.g.valuesFor(UI.g.played)[cat];
+  return `Nếu vòng chốt ngay, mỗi món ${CATS[cat].icon} ${CATS[cat].name} bán được <b>${xu(v)}</b>. Tích lũy các vòng trước: <b>${UI.g.cum(cat)}</b>.`;
+}
+
+function promptEl(pend){
+  const g=UI.g, me=g.players[UI.human], el=document.createElement('div'); el.className='prompt';
+  const k=pend.kind, st=pend.ctx.st;
+  const numRow=(min,max,init,label,onOk,extra='')=>{
+    el.innerHTML+=`<div class="row"><button data-d="-5">−5</button><input type="number" id="amt" inputmode="numeric" min="${min}" max="${max}" value="${init}"><button data-d="1">+1</button><button data-d="5">+5</button><button data-d="10">+10</button><span class="hint">tối đa ${xu(max)}</span></div><div class="row"><button class="primary" id="ok">${label}</button>${extra}</div>`;
+    setTimeout(()=>{
+      const inp=$('#amt'); if(!inp) return;
+      el.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{ inp.value=Math.max(min,Math.min(max,(+inp.value||0)+(+b.dataset.d))); });
+      const go=()=>{ const v=Math.floor(+inp.value||0); if(v<min||v>max){ inp.style.borderColor='var(--bad)'; return; } onOk(v); };
+      $('#ok').onclick=go; inp.onkeydown=e=>{ if(e.key==='Enter') go(); };
+      inp.focus(); inp.select();
+    });
+  };
+  if(k==='chooseCard'){
+    el.innerHTML=`<div><b>Lượt của bạn.</b> Chạm một vật phẩm trong kho để đưa lên sàn đấu giá. Bạn nhận tiền người mua trả (nếu chính bạn mua thì trả cho ngân hàng).</div><div class="hint">⚠ = món đó là món thứ 5 của dòng → vòng kết thúc ngay, món đó không được bán.</div>`;
+  } else if(k==='doubleAdd'){
+    const c=pend.ctx.card;
+    el.innerHTML=`<div><b>Ghép đôi ${CATS[c.cat].icon} ${CATS[c.cat].name}?</b> Chọn 1 món cùng dòng trong kho (sáng viền) để bán cả cặp — bạn sẽ là người bán và nhận tiền.</div><div class="hint">${valueHint(c.cat)}</div><div class="row"><button id="skip">Không ghép</button></div>`;
+    setTimeout(()=>$('#skip').onclick=()=>pend.resolve(null));
+  } else if(k==='bid'){
+    const min=st.best+1, max=me.money;
+    el.innerHTML=`<div><b>Trả giá?</b> ${st.auctioneer===UI.human?'Bạn là người bán — nếu bạn thắng, bạn trả tiền cho ngân hàng.':`Nếu thắng, bạn trả tiền cho <b>${esc(P(st.auctioneer))}</b>.`}</div><div class="hint">${valueHint(st.lots[0].cat)} Số món: ${st.lots.length}.</div>`;
+    numRow(min,max,Math.min(min,max),`Trả giá`,v=>pend.resolve(v),`<button id="pass">Bỏ</button>`);
+    setTimeout(()=>$('#pass').onclick=()=>pend.resolve(0));
+  } else if(k==='sealed'){
+    el.innerHTML=`<div><b>Bỏ giá kín.</b> Nhập số tiền (0 = không mua). Giá cao nhất thắng.</div><div class="hint">${valueHint(st.lots[0].cat)} Số món: ${st.lots.length}.</div>`;
+    numRow(0,me.money,0,'Gửi giá kín',v=>pend.resolve(v));
+  } else if(k==='fixedPrice'){
+    el.innerHTML=`<div><b>Niêm yết giá.</b> Lần lượt từng người được mua với giá này. Nếu không ai mua, <b>bạn phải tự mua</b> (trả ngân hàng).</div><div class="hint">${valueHint(st.lots[0].cat)} Số món: ${st.lots.length}.</div>`;
+    numRow(1,me.money,Math.max(1,Math.min(me.money,Math.round(g.valuesFor(g.played)[st.lots[0].cat]*st.lots.length*0.6)||10)),'Niêm yết',v=>pend.resolve(v));
+  } else if(k==='acceptFixed'){
+    el.innerHTML=`<div><b>Mua với giá ${xu(st.price)}?</b> Tiền trả cho ${esc(P(st.auctioneer))}.</div><div class="hint">${valueHint(st.lots[0].cat)} Số món: ${st.lots.length}.</div><div class="row"><button class="primary" id="buy">Mua ${xu(st.price)}</button><button id="no">Bỏ qua</button></div>`;
+    setTimeout(()=>{ $('#buy').onclick=()=>pend.resolve(true); $('#no').onclick=()=>pend.resolve(false); });
+  }
+  return el;
+}
+
+function renderHand(){
+  const g=UI.g, me=g.players[UI.human], pend=UI.pending, root=$('#hand');
+  root.innerHTML='';
+  $('#handCount').textContent=`${me.hand.length} lá`;
+  for(const card of me.hand){
+    let click=null, dim=false, warn='';
+    if(pend && pend.kind==='chooseCard'){ click=()=>pend.resolve(card); if(g.played[card.cat]+1>=CONFIG.endCount) warn='⚠ chốt vòng'; }
+    else if(pend && pend.kind==='doubleAdd'){ if(pend.ctx.opts.includes(card)){ click=()=>pend.resolve(card); if(g.played[card.cat]+1>=CONFIG.endCount) warn='⚠ chốt vòng'; } else dim=true; }
+    root.appendChild(cardEl(card,{click,dim,warn}));
+  }
+  if(!me.hand.length) root.innerHTML='<div class="idle">Kho trống.</div>';
+}
+
+function ask(kind,ctx={}){
+  return new Promise(res=>{
+    UI.pending={kind,ctx,resolve:v=>{ UI.pending=null; render(); res(v); }};
+    render();
+  });
+}
+const HumanCtrl={
+  chooseCard:()=>ask('chooseCard'),
+  chooseDoubleAdd:(g,q,card,opts)=>ask('doubleAdd',{card,opts}),
+  bid:(g,i,st)=>ask('bid',{st}),
+  sealedBid:(g,i,st)=>ask('sealed',{st}),
+  fixedPrice:(g,i,st)=>ask('fixedPrice',{st}),
+  acceptFixed:(g,i,st)=>ask('acceptFixed',{st}),
+};
+
+/* ---------- Modal helpers ---------- */
+function modal(html){ $('#modalBody').innerHTML=html; $('#modal').classList.remove('hidden'); }
+function closeModal(){ $('#modal').classList.add('hidden'); }
+function modalWait(html,btnId='mOk'){ return new Promise(res=>{ modal(html); $('#'+btnId).onclick=()=>{ closeModal(); res(); }; }); }
+
+/* ---------- Event stream from engine ---------- */
+async function onEvent(type,d,g){
+  switch(type){
+    case 'roundStart': addLog(`━━ Vòng ${d.round+1} bắt đầu ━━`,'sys'); render(); await wait(500); break;
+    case 'turn': render(); break;
+    case 'cardPlayed':
+      addLog(`${P(d.player)} đưa lên sàn ${cardLabel(d.card)}${d.ended?' — món thứ 5, vòng kết thúc!':''}`, d.ended?'sys':'');
+      render(); await wait(d.ended?1200:450); break;
+    case 'doubleAdded':
+      addLog(`${P(d.player)} ghép thêm ${cardLabel(d.card)}${d.ended?' — món thứ 5, vòng kết thúc!':' → bán cả cặp'}`, d.ended?'sys':'');
+      render(); await wait(600); break;
+    case 'doubleFree': addLog(`Không ai ghép đôi — ${P(d.player)} nhận miễn phí ${cardLabel(d.card)}`); render(); await wait(700); break;
+    case 'auctionStart': render(); await wait(350); break;
+    case 'bid': addLog(`  ${P(d.player)} trả ${xu(d.amount)}`); render(); await wait(420); break;
+    case 'pass': render(); await wait(180); break;
+    case 'sealedIn': render(); await wait(150); break;
+    case 'sealedReveal':
+      g.stage.revealed=true;
+      addLog('  Mở giá kín: '+Object.entries(d.bids).map(([i,v])=>`${P(+i)} ${v}`).join(', '));
+      render(); await wait(900); break;
+    case 'fixedSet': addLog(`  ${P(d.player)} niêm yết ${xu(d.price)}`); render(); await wait(450); break;
+    case 'sold': {
+      const who=P(d.winner), to=d.winner===d.auctioneer?'ngân hàng':P(d.auctioneer);
+      addLog(`  → ${who} mua ${d.lots.length>1?'cả cặp':''} giá ${xu(d.price)}${d.price?` (trả ${to})`:''}`,'sys');
+      render(); await wait(800); break;
+    }
+    case 'log': addLog(d.msg); render(); await wait(250); break;
+    case 'roundEnd': render(); await showRoundEnd(d,g); break;
+    case 'gameOver': render(); await showGameOver(g); break;
+  }
+}
+
+async function showRoundEnd(d,g){
+  const rows=CATS.map(c=>{
+    const k=d.top.indexOf(c.id);
+    return `<tr><td>${c.icon} ${c.name}</td><td class="n">${d.counts[c.id]}</td><td class="n">${k>=0?`<span class="rank r${k+1}">#${k+1}</span> +${CONFIG.awards[k]}`:'—'}</td><td class="n"><b>${d.value[c.id]}</b></td></tr>`;
+  }).join('');
+  const prow=g.players.map((p,i)=>{
+    const items=d.won[i].length?CATS.map(c=>{ const n=d.won[i].filter(x=>x.cat===c.id).length; return n?`${c.icon}×${n}`:''; }).filter(Boolean).join(' '):'—';
+    return `<tr class="${i===UI.human?'me':''}"><td>${esc(p.name)}</td><td>${items}</td><td class="n">+${d.payouts[i]}</td><td class="n">${p.money}</td></tr>`;
+  }).join('');
+  addLog(`Kết thúc vòng ${d.round+1}: ${d.top.map((c,k)=>`#${k+1} ${CATS[c].short}=${d.value[c]}`).join(', ')}`,'sys');
+  await modalWait(`<h2>Kết thúc vòng ${d.round+1}</h2>
+    <p class="hint">3 dòng nhiều món nhất được cộng giá trị (30/20/10) — cộng dồn qua các vòng, nhưng chỉ trả tiền nếu dòng đó lọt top 3 ở vòng này.</p>
+    <table><tr><th>Dòng</th><th class="n">Số món</th><th class="n">Hạng</th><th class="n">Giá/món</th></tr>${rows}</table>
+    <h3>Bán lại cho ngân hàng</h3>
+    <table><tr><th>Nhà sưu tầm</th><th>Đã mua</th><th class="n">Thu</th><th class="n">Tiền</th></tr>${prow}</table>
+    <div class="btns"><button class="primary" id="mOk">${d.round+1<CONFIG.rounds?'Sang vòng '+(d.round+2):'Xem kết quả'}</button></div>`);
+}
+
+async function showGameOver(g){
+  const score=g.players[UI.human].money;
+  const sub=await LeaderboardAPI.submit(UI.season,UI.name,score);
+  const rows=await LeaderboardAPI.getSeason(UI.season);
+  const myRank=rows.findIndex(r=>!r.bot&&r.name===UI.name)+1;
+  const table=[...g.players].map((p,i)=>({p,i})).sort((a,b)=>b.p.money-a.p.money)
+    .map(({p,i},k)=>`<tr class="${i===UI.human?'me':''}"><td><span class="rank ${k<3?'r'+(k+1):''}">${k+1}</span></td><td>${esc(p.name)}</td><td class="n">${p.money}</td></tr>`).join('');
+  addLog(`Kết thúc phiên — bạn có ${xu(score)}.`,'sys');
+  modal(`<h2>Phiên kết thúc</h2>
+    <p>Điểm của bạn: <b style="font-size:22px;color:var(--gold)">${score}</b> ${sub.improved?'<span class="pill">Kỷ lục mới hôm nay!</span>':`<span class="pill">Kỷ lục hôm nay: ${sub.best}</span>`}</p>
+    <p>Hạng trong mùa <b>${UI.season}</b>: <b>#${myRank}</b> / ${rows.length} · lượt chơi: ${sub.attempts}</p>
+    <h3>Bàn này</h3><table><tr><th></th><th>Nhà sưu tầm</th><th class="n">Tiền</th></tr>${table}</table>
+    <div class="btns"><button class="primary" id="mLB">🏆 Bảng xếp hạng</button><button id="mAgain">Chơi lại hôm nay</button></div>
+    <p class="hint">Mỗi mùa kéo dài 1 ngày; chỉ tính điểm cao nhất của bạn trong ngày. Mùa mới sau ${fmtDur(msToMidnight())}.</p>`);
+  $('#mLB').onclick=()=>showLeaderboard();
+  $('#mAgain').onclick=()=>{ closeModal(); startGame(); };
+}
+
+/* ---------- Leaderboard view ---------- */
+async function showLeaderboard(tab='today'){
+  const seasons=await LeaderboardAPI.listSeasons();
+  let body='';
+  if(tab==='today'){
+    const rows=await LeaderboardAPI.getSeason(UI.season);
+    body=`<p class="hint">Mùa <b>${UI.season}</b> · còn ${fmtDur(msToMidnight())} · cùng bộ bài cho mọi người chơi hôm nay.</p>
+      <table><tr><th>#</th><th>Người chơi</th><th class="n">Điểm</th><th class="n">Lượt</th></tr>${rows.slice(0,20).map((r,k)=>`<tr class="${!r.bot&&r.name===UI.name?'me':''}"><td><span class="rank ${k<3?'r'+(k+1):''}">${k+1}</span></td><td class="${r.bot?'bot':''}">${r.bot?'🤖 ':''}${esc(r.name)}</td><td class="n">${r.score}</td><td class="n">${r.bot?'':r.attempts}</td></tr>`).join('')}</table>`;
+  } else {
+    const list=[];
+    for(const s of seasons){
+      const rows=await LeaderboardAPI.getSeason(s);
+      const me=rows.findIndex(r=>!r.bot&&r.name===UI.name);
+      list.push(`<tr class="${s===UI.season?'me':''}"><td>${s}</td><td>${rows[0]?(rows[0].bot?'🤖 ':'')+esc(rows[0].name)+' ('+rows[0].score+')':'—'}</td><td class="n">${me>=0?rows[me].score:'—'}</td><td class="n">${me>=0?'#'+(me+1):'—'}</td></tr>`);
+    }
+    const wins=(await Promise.all(seasons.map(async s=>{ const r=await LeaderboardAPI.getSeason(s); return r[0]&&!r[0].bot&&r[0].name===UI.name; }))).filter(Boolean).length;
+    body=`<p class="hint">Bạn đã vô địch <b>${wins}</b> mùa.</p><table><tr><th>Mùa</th><th>Vô địch</th><th class="n">Bạn</th><th class="n">Hạng</th></tr>${list.join('')||'<tr><td colspan=4>Chưa có mùa nào.</td></tr>'}</table>`;
+  }
+  modal(`<h2>🏆 Bảng xếp hạng</h2>
+    <div class="tabs"><button id="tToday" class="${tab==='today'?'on':''}">Mùa hôm nay</button><button id="tPast" class="${tab!=='today'?'on':''}">Các mùa</button></div>
+    ${body}
+    <p class="hint">🤖 = điểm AI chơi cùng bộ bài hôm nay (mốc so sánh). Bản prototype lưu BXH trên máy này (localStorage) — khi ghép SDK sẽ thay bằng server.</p>
+    <div class="btns"><button class="primary" id="mClose">Đóng</button></div>`);
+  $('#tToday').onclick=()=>showLeaderboard('today');
+  $('#tPast').onclick=()=>showLeaderboard('past');
+  $('#mClose').onclick=()=>{ closeModal(); if(!UI.running) showStart(); };
+}
+
+function rulesHtml(){
+  return `<h2>📜 Luật chơi</h2>
+  <p>Bạn và 3 nhà sưu tầm AI mua bán vật phẩm thuộc 5 dòng. Ai có <b>nhiều tiền nhất</b> sau 4 vòng thắng. Cơ chế dựa trên <i>Modern Art</i> (Reiner Knizia).</p>
+  <h3>Mỗi lượt</h3>
+  <ul><li>Người tới lượt đưa 1 vật phẩm trong kho lên sàn. Biểu tượng trên lá quyết định kiểu đấu giá.</li>
+  <li>Người mua trả tiền <b>cho người bán</b>. Nếu người bán tự mua lại, tiền trả cho <b>ngân hàng</b>. Không ai mua → người bán nhận miễn phí.</li></ul>
+  <h3>5 kiểu đấu giá</h3>
+  <ul>${Object.values(TYPES).map(t=>`<li>${t.icon} <b>${t.name}</b>: ${t.desc}</li>`).join('')}</ul>
+  <p class="hint">Đôi: nếu người bán không ghép được, quyền ghép chuyển lần lượt sang người kế tiếp; ai ghép thì thành người bán. Không ai ghép → người bán nhận món đó miễn phí.</p>
+  <h3>Kết thúc vòng</h3>
+  <ul><li>Khi một dòng có <b>món thứ 5</b> lên sàn, vòng kết thúc ngay (món đó không được bán).</li>
+  <li>3 dòng nhiều món nhất vòng được +30 / +20 / +10 (hoà: dòng đứng trên bảng thắng).</li>
+  <li>Giá mỗi món = tổng giá trị dòng đó tích lũy qua các vòng — <b>chỉ khi</b> dòng đó lọt top 3 vòng này; còn lại = 0.</li>
+  <li>Tất cả món đã mua được bán lại cho ngân hàng rồi bỏ đi. Đầu vòng sau chia thêm lá (9 / 4 / 4 / 0).</li></ul>
+  <h3>Mùa hằng ngày</h3>
+  <ul><li>Mỗi ngày là 1 mùa: mọi người chơi cùng một bộ bài và cùng đối thủ AI.</li>
+  <li>Chơi bao nhiêu lần tùy ý, BXH lấy điểm cao nhất trong ngày. Qua 0h mùa mới bắt đầu.</li></ul>
+  <div class="btns"><button class="primary" id="mOk">Đã hiểu</button></div>`;
+}
+
+function showStart(){
+  let saved=''; try{ saved=localStorage.getItem('dailyAuction.name')||''; }catch(e){}
+  modal(`<h2>🏛️ Sàn Đấu Giá Hằng Ngày</h2>
+    <p>Sưu tầm, đẩy giá và bán lại vật phẩm. Mùa <b>${UI.season}</b> — còn <span id="cd">${fmtDur(msToMidnight())}</span>.</p>
+    <h3>Tên của bạn</h3>
+    <input type="text" id="nm" maxlength="20" placeholder="VD: Minh" value="${esc(saved)}">
+    <div class="btns"><button class="gold" id="go">Vào phiên hôm nay</button><button id="lb">🏆 BXH</button><button id="ru">📜 Luật</button></div>`);
+  const go=()=>{ const v=$('#nm').value.trim(); if(!v){ $('#nm').style.borderColor='var(--bad)'; $('#nm').focus(); return; } UI.name=v; try{ localStorage.setItem('dailyAuction.name',v); }catch(e){} closeModal(); startGame(); };
+  $('#go').onclick=go; $('#nm').onkeydown=e=>{ if(e.key==='Enter') go(); };
+  $('#lb').onclick=()=>showLeaderboard();
+  $('#ru').onclick=()=>modalWait(rulesHtml()).then(showStart);
+  // làm nóng BXH bot ở nền
+  LeaderboardAPI.getSeason(UI.season);
+}
+
+async function startGame(){
+  UI.running=true;
+  $('#log').innerHTML='';
+  const seed=seedOf(UI.season);
+  const names=[UI.name,...AI_NAMES];
+  const ctrls=[HumanCtrl,...AI_NAMES.map((_,k)=>makeAI(seed,k+1,personaFor(seed,k+1)))];
+  UI.g=new Game({seed,names,controllers:ctrls,emit:onEvent});
+  render();
+  await UI.g.run();
+  UI.running=false;
+}
+
+$('#btnRules').onclick=()=>modalWait(rulesHtml());
+$('#btnLB').onclick=()=>showLeaderboard();
+$('#btnSpeed').onclick=()=>{ UI.speed=UI.speed===1?0.3:1; $('#btnSpeed').textContent=UI.speed===1?'⏩ Thường':'⏩ Nhanh'; };
+
+/* ---------- Debug / kiểm thử: window.DBG ---------- */
+window.DBG={
+  get g(){ return UI.g; }, runAiGame, LeaderboardAPI,
+  /** Chạy n ván toàn AI, kiểm tra bất biến; trả về thống kê */
+  async simulate(n=50){
+    const errs=[], scores=[], rounds=[]; let doubles=0, ends=0;
+    for(let k=0;k<n;k++){
+      const seed='sim:'+k;
+      const names=['A','B','C','D'];
+      const ctrls=names.map((_,i)=>makeAI(seed,i,personaFor(seed,i)));
+      let auctions=0;
+      const g=new Game({seed,names,controllers:ctrls,emit:(t,d)=>{ if(t==='sold') auctions++; if(t==='doubleAdded') doubles++; if(t==='cardPlayed'&&d.ended) ends++; }});
+      await g.run();
+      const total=sum(g.players.map(p=>p.money));
+      if(total!==4*CONFIG.startMoney+g.bankOut-g.bankIn) errs.push(`${seed}: tiền không bảo toàn`);
+      if(g.players.some(p=>p.money<0)) errs.push(`${seed}: tiền âm`);
+      if(g.roundResults.length!==CONFIG.rounds) errs.push(`${seed}: số vòng ${g.roundResults.length}`);
+      for(const r of g.roundResults) if(r.counts.some(c=>c>CONFIG.endCount)) errs.push(`${seed}: dòng vượt ${CONFIG.endCount}`);
+      scores.push(...g.players.map(p=>p.money)); rounds.push(auctions);
+    }
+    scores.sort((a,b)=>a-b);
+    return { games:n, errors:errs, scoreMin:scores[0], scoreMedian:scores[scores.length>>1], scoreMax:scores[scores.length-1], avgAuctionsPerGame:+(sum(rounds)/n).toFixed(1), doublesAdded:doubles, roundsEndedBy5th:ends };
+  },
+  /** Kiểm tra cùng 1 seed cho kết quả giống nhau */
+  async determinism(seed='daily:2026-10-01'){ const a=await runAiGame(seed,'x'), b=await runAiGame(seed,'x'); return JSON.stringify(a.players.map(p=>p.money))===JSON.stringify(b.players.map(p=>p.money)); },
+};
+
+/* Khởi động: chạy trước 1 bàn rỗng để hiện bảng, rồi mở màn hình bắt đầu */
+UI.g=new Game({seed:seedOf(UI.season),names:['Bạn',...AI_NAMES],controllers:[]});
+UI.g.current=-1; render();
+if(!new URLSearchParams(location.search).has('nostart')) showStart();
+</script>
+</body>
+</html>
