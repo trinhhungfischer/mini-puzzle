@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Jigsaw piece: knobs on top and right, notch on bottom. -->
+  <path d="M3 9 H9 a4 4 0 1 1 8 0 H23 V15 a4 4 0 1 1 0 8 V29 H17 a4 4 0 1 0 -8 0 H3 Z"
+        fill="#e8683a" stroke="#c4532a" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>
